@@ -1,0 +1,65 @@
+/* mynah global theme — warm dark, Claude Code CLI inspired. */
+
+App {
+    background: #1A1A1A;
+    color: #D9D9D9;
+}
+
+Screen {
+    background: #1A1A1A;
+}
+
+Header {
+    background: #262626;
+    color: #2DD4BF;
+    text-style: bold;
+}
+
+Footer {
+    background: #262626;
+    color: #8C8C8C;
+}
+
+Button {
+    background: #303030;
+    color: #D9D9D9;
+}
+
+Button.-primary {
+    background: #14B8A6;
+    color: #1A1A1A;
+    text-style: bold;
+}
+
+Button.-success {
+    background: #52C41A;
+    color: #1A1A1A;
+    text-style: bold;
+}
+
+.accent {
+    color: #2DD4BF;
+    text-style: bold;
+}
+
+.success {
+    color: #52C41A;
+}
+
+.warning {
+    color: #FAAD14;
+}
+
+.error {
+    color: #FF4D4F;
+}
+
+.muted {
+    color: #595959;
+}
+
+.section_title {
+    color: #2DD4BF;
+    text-style: bold;
+    margin-top: 1;
+}

@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mynah-stt"
+version = "0.1.0"
+description = "Local-first transcription tool for Korean meetings (audio file -> txt)"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Leo Kim", email = "leo.kim@thebytesize.ai" },
+]
+keywords = ["speech-to-text", "transcription", "whisper", "korean", "meeting", "tui"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = [
+    "whisperx>=3.1",
+    "textual>=0.80",
+    "platformdirs>=4.0",
+    "tomli-w>=1.0",
+    "sounddevice>=0.4",
+    "ctranslate2>=4.0",
+]
+
+[project.optional-dependencies]
+denoise = ["demucs>=4.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+mynah = "mynah.app:main"
+
+[project.urls]
+Homepage = "https://github.com/rlawjdghksdlqslek/mynah-stt"
+Issues = "https://github.com/rlawjdghksdlqslek/mynah-stt/issues"
+
+[tool.setuptools.packages.find]
+include = ["mynah*"]
+
+[tool.setuptools.package-data]
+"mynah.tui" = ["*.css"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: requires WhisperX models and ffmpeg",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
