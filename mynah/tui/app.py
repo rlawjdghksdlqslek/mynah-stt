@@ -6,6 +6,11 @@ from textual.app import App
 
 from mynah.tui.screens.editor import EditorScreen, EditorTarget
 from mynah.tui.screens.main import MainScreen
+from mynah.tui.widgets import patch_header_title_race
+
+# Every screen composes a Header, and an unpatched one can kill the app during
+# shutdown or a fast screen switch. Apply before any App is constructed.
+patch_header_title_race()
 
 
 class MynahApp(App):

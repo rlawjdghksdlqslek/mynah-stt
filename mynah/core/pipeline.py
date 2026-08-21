@@ -11,6 +11,7 @@ from mynah.config import glossary as glossary_mod
 from mynah.config import replacements as replacements_mod
 from mynah.core import audio as audio_mod
 from mynah.core import format as format_mod
+from mynah.core import session as session_mod
 from mynah.core import transcribe as transcribe_mod
 
 ProgressCb = Callable[[str, str, float | None], None] | None
@@ -153,3 +154,119 @@ def run(
                 tmp.unlink(missing_ok=True)
             except OSError:
                 pass
+
+
+def segments_to_result(segments: list[dict], language: str = "ko") -> dict:
+    """Adapt JSONL segments to the dict shape format.render() already takes."""
+    return {"segments": segments, "language": language}
+
+
+UNCOVERED_FLOOR_SECONDS = 5.0
+"""Below this, the live worker simply drained normally — re-transcribing the
+tail end would cost a model load for nothing."""
+
+
+def has_uncovered_audio(session, segments: list[dict] | None = None) -> bool:
+    """Does this session hold audio no segment covers? Whisper will be loaded
+    during finalization if so."""
+    if segments is None:
+        segments = session_mod.read_segments(session)
+    covered = max((s.get("end", 0.0) for s in segments), default=0.0)
+    return session_mod.duration_seconds(session) - covered > UNCOVERED_FLOOR_SECONDS
+
+
+def _transcribe_uncovered(session, options, segments: list[dict], emit) -> list[dict]:
+    """Transcribe audio no segment covers, and return the updated segments.
+
+    Two ways a session arrives here with untranscribed audio: live_transcribe
+    was off, so no worker ever ran (the design's "transcribe after stop"
+    fallback), or a crash killed the worker before its final chunk. Both are
+    the same hole, so both get the same patch.
+    """
+    if not has_uncovered_audio(session, segments):
+        return segments
+
+    from mynah.core import live as live_mod  # lazy: pulls the ML stack
+
+    covered = max((s.get("end", 0.0) for s in segments), default=0.0)
+    total = session_mod.duration_seconds(session)
+    emit("transcribe", f"transcribing {int(total - covered)}s not yet covered", 0.0)
+    pcm = session_mod.read_slice(
+        session,
+        int(covered * session_mod.BYTES_PER_SECOND),
+        session_mod.audio_bytes(session),
+    )
+    seg = live_mod.transcribe_chunk(
+        pcm,
+        start_seconds=covered,
+        model_name=options.model,
+        language=options.language,
+        prompt=glossary_mod.as_initial_prompt(glossary_mod.load()),
+        backend=str(session_mod.get_options(session).get("backend", "auto")),
+    )
+    session_mod.append_segment(session, seg)
+    emit("transcribe", "transcribed remaining audio", 1.0)
+    return session_mod.read_segments(session)
+
+
+def finalize_session(
+    session,
+    options: PipelineOptions,
+    *,
+    on_progress: ProgressCb = None,
+) -> PipelineResult:
+    """Turn a recorded session into meeting.wav + meeting.txt.
+
+    The same call serves a clean shutdown and a crash recovery — the WAV
+    length comes from the PCM file size, and read_segments() skips any
+    partially written final line.
+    """
+    def _emit(stage: str, message: str, progress: float | None = None) -> None:
+        if on_progress:
+            on_progress(stage, message, progress)
+
+    session_mod.set_status(session, session_mod.STATUS_TRANSCRIBING)
+
+    _emit("format", "packaging audio", 0.0)
+    wav_path = session_mod.finalize_wav(session)
+    _emit("format", f"packaged {wav_path.name}", 0.2)
+
+    segments = session_mod.read_segments(session)
+
+    if options.diarize:
+        # Diarization needs word-level timestamps and global speaker
+        # clustering across the whole meeting. Per-chunk live transcription
+        # produces neither, so re-run the file pipeline over the finalized
+        # WAV. This is the post-recording wait the design calls an
+        # algorithmic constraint, not a design choice.
+        _emit("diarize", "re-transcribing for speaker labels", 0.0)
+        out = run(wav_path, options, on_progress=on_progress)
+        session_mod.set_status(session, session_mod.STATUS_DONE)
+        return out
+
+    try:
+        segments = _transcribe_uncovered(session, options, segments, _emit)
+    except Exception as exc:  # noqa: BLE001
+        # Better a transcript missing its tail than no transcript and a
+        # session the recovery banner can never finish.
+        _emit("transcribe", f"tail transcription failed: {exc}", 1.0)
+    result = segments_to_result(segments, language=options.language)
+
+    _emit("format", "rendering output", 0.5)
+    text = format_mod.render(
+        result, diarize=options.diarize, timestamps=options.timestamps,
+    )
+    rules = replacements_mod.load()
+    if rules:
+        text = replacements_mod.apply(text, rules)
+
+    out_path = session.dir / "meeting.txt"
+    out_path.write_text(text, encoding="utf-8")
+    session_mod.set_status(session, session_mod.STATUS_DONE)
+    _emit("format", f"wrote {out_path}", 1.0)
+
+    return PipelineResult(
+        output_path=out_path,
+        output_text=text,
+        stages_run=["format"],
+    )

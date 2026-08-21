@@ -12,7 +12,6 @@ from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Log, ProgressBar, Static
 
 from mynah.core.pipeline import PipelineOptions, PipelineResult
-from mynah.core.pipeline import run as run_pipeline
 
 
 @dataclass
@@ -75,16 +74,28 @@ class ProgressScreen(Screen):
     }
     """
 
-    def __init__(self, audio_path: Path, options: PipelineOptions):
+    def __init__(
+        self,
+        session=None,
+        options: PipelineOptions | None = None,
+        audio_path: Path | None = None,
+    ):
         super().__init__()
+        if (session is None) == (audio_path is None):
+            raise ValueError("pass exactly one of session= or audio_path=")
+        self._session = session
         self._audio_path = audio_path
-        self._options = options
+        self._options = options or PipelineOptions()
         self._stages: dict[str, StageState] = {
             name: StageState(name=name, label=label) for name, label in STAGES
         }
-        if not options.denoise:
+        if session is not None:
+            # Live chunk transcription already happened during recording.
+            for skipped in ("audio", "denoise", "transcribe"):
+                self._stages[skipped].status = "skipped"
+        elif not self._options.denoise:
             self._stages["denoise"].status = "skipped"
-        if not options.diarize:
+        if not self._options.diarize:
             self._stages["diarize"].status = "skipped"
         self._result: PipelineResult | None = None
         self._error: BaseException | None = None
@@ -93,7 +104,8 @@ class ProgressScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with Vertical(id="content"):
-            yield Static(f"Transcribing: {self._audio_path.name}", classes="file_label")
+            label_name = self._session.dir.name if self._session else self._audio_path.name
+            yield Static(f"Processing: {label_name}", classes="file_label")
             for name, _ in STAGES:
                 yield Static(self._render_stage_line(name), id=f"row_{name}", markup=True)
             yield ProgressBar(total=100, show_eta=False, id="bar")
@@ -104,14 +116,23 @@ class ProgressScreen(Screen):
 
     def on_mount(self) -> None:
         from mynah.core.model_cache import is_whisper_cached
+        from mynah.core.pipeline import has_uncovered_audio
 
-        if not is_whisper_cached(self._options.model):
+        # A session only skips Whisper when diarize is off AND its segments
+        # already cover the audio — otherwise finalization transcribes the
+        # uncovered tail and loads the model.
+        needs_whisper = (
+            self._session is None
+            or self._options.diarize
+            or has_uncovered_audio(self._session)
+        )
+        if needs_whisper and not is_whisper_cached(self._options.model):
             self._log(
                 "First run: downloading Whisper model "
                 "(~3 GB, 5-15 min on broadband)..."
             )
             self._log("Subsequent runs use the cached model and start instantly.")
-        self._log("Starting pipeline...")
+        self._log("Finalizing session..." if self._session else "Starting pipeline...")
         self.run_worker(self._do_run, thread=True, exclusive=True)
 
     def _render_stage_line(self, name: str) -> str:
@@ -154,9 +175,18 @@ class ProgressScreen(Screen):
             self.app.call_from_thread(self._on_progress, stage, message, p)
 
         try:
-            result = run_pipeline(
-                self._audio_path, self._options, on_progress=progress_cb
-            )
+            if self._session is not None:
+                from mynah.core.pipeline import finalize_session
+
+                result = finalize_session(
+                    self._session, self._options, on_progress=progress_cb
+                )
+            else:
+                from mynah.core.pipeline import run as run_pipeline
+
+                result = run_pipeline(
+                    self._audio_path, self._options, on_progress=progress_cb
+                )
         except BaseException as exc:  # noqa: BLE001 — surface anything
             self._error = exc
             self.app.call_from_thread(self._on_finished)

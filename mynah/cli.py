@@ -55,6 +55,20 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Check system dependencies and configuration",
     )
+    parser.add_argument(
+        "--suggest-replacements",
+        action="store_true",
+        help="Analyze transcripts and suggest replacement rules",
+    )
+    parser.add_argument(
+        "--scan-dir",
+        metavar="DIR",
+        default=None,
+        help=(
+            "Directory to scan for transcripts (used with --suggest-replacements; "
+            "default: ~/Documents/mynah-output)"
+        ),
+    )
     parser.add_argument("--version", action="version", version=f"mynah {__version__}")
     return parser
 
@@ -163,6 +177,18 @@ def _run_doctor() -> int:
     except ImportError:
         fail("whisperx", "pipx runpip mynah-stt install whisperx")
 
+    try:
+        import jamo as _jamo  # type: ignore
+        ok("jamo", getattr(_jamo, "__version__", "installed"))
+    except ImportError:
+        fail("jamo", "pipx runpip mynah-stt install jamo")
+
+    try:
+        from kiwipiepy import Kiwi as _Kiwi  # type: ignore  # noqa: F401
+        ok("kiwipiepy", "installed")
+    except ImportError:
+        fail("kiwipiepy", "pipx runpip mynah-stt install kiwipiepy")
+
     print()
 
     from mynah.core.model_cache import is_whisper_cached
@@ -179,6 +205,45 @@ def _run_doctor() -> int:
         ok("HuggingFace token", "configured")
     else:
         warn("HuggingFace token", "not set (required for --diarize; run: mynah --setup)")
+
+    print()
+
+    # Backend and model — the user needs to see which engine is actually running
+    from mynah.core import transcribe as transcribe_mod
+
+    try:
+        backend = transcribe_mod.pick_backend(settings.backend)
+    except transcribe_mod.TranscribeError as exc:
+        backend = f"ERROR: {exc}"
+    print(f"  backend:            {backend}  (setting: {settings.backend})")
+    print(f"  model:              {settings.model}")
+    print(f"  live transcribe:    {settings.live_transcribe}")
+
+    # Input level: recordings below about -30 dBFS drive Whisper into
+    # hallucination loops. Surface it so a regression is visible.
+    import audioop
+    import math
+
+    from mynah.core import session as session_mod
+
+    recent = session_mod.list_unfinished()
+    if not recent:
+        root = session_mod.default_root()
+        if root.is_dir():
+            recent = [
+                session_mod.open_session(d)
+                for d in sorted(root.glob("*"))[-1:]
+                if d.is_dir() and (d / session_mod.AUDIO_NAME).exists()
+            ]
+    if recent:
+        pcm = session_mod.read_slice(recent[-1], 0, 32000 * 30)
+        if len(pcm) % 2:
+            pcm = pcm[: len(pcm) - 1]
+        if pcm:
+            rms = audioop.rms(pcm, 2)
+            dbfs = 20 * math.log10(rms / 32768.0) if rms else -99.0
+            verdict = "OK" if dbfs > -30 else "TOO QUIET — expect hallucinations"
+            print(f"  last input level:   {dbfs:.1f} dBFS  [{verdict}]")
 
     print()
     if has_errors:
@@ -218,12 +283,103 @@ def _run_setup() -> int:
     return 0
 
 
+def _run_suggest_glossary(directory: str) -> int:
+    """Scan transcripts and suggest glossary terms + replacement rules interactively.
+
+    For each cluster the user provides a canonical spelling. The canonical goes
+    into the glossary (so Whisper biases toward it on future transcriptions),
+    and the cluster's mis-spelled variants become replacements (so existing and
+    future transcripts get post-processed to the canonical form).
+    """
+    from mynah.config import glossary as glossary_mod
+    from mynah.config import replacements as replacements_mod
+    from mynah.config.replacements import Rule
+    from mynah.core.corpus import find_clusters, scan_transcripts
+
+    scan_dir = (
+        Path(directory).expanduser()
+        if directory
+        else Path.home() / "Documents" / "mynah-output"
+    )
+
+    if not scan_dir.is_dir():
+        print(f"error: directory not found: {scan_dir}", file=sys.stderr)
+        return 2
+
+    txt_files = list(scan_dir.glob("*.txt"))
+    if not txt_files:
+        print("No transcript files found. Run a recording first.")
+        return 0
+
+    print(f"Analyzing... {scan_dir}")
+    freq = scan_transcripts([scan_dir])
+    clusters = find_clusters(freq)
+
+    if not clusters:
+        print("No suspicious terms found.")
+        return 0
+
+    print(f"\nAnalyzed {len(txt_files)} file(s), {len(freq)} unique words\n")
+
+    new_canonicals: list[str] = []
+    new_rules: list[Rule] = []
+    for i, cluster in enumerate(clusters, 1):
+        words_str = "  ·  ".join(f"{w}({f})" for w, f in cluster.words)
+        print(f"[{i}/{len(clusters)}] {words_str}")
+        try:
+            canonical = input("  Correct spelling (Enter to skip): ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\nCancelled.")
+            break
+        if canonical:
+            new_canonicals.append(canonical)
+            for word, _ in cluster.words:
+                if word != canonical:
+                    new_rules.append(Rule(src=word, dst=canonical))
+        print()
+
+    added_terms = 0
+    if new_canonicals:
+        existing_terms = glossary_mod.load()
+        existing_set = set(existing_terms)
+        merged = list(existing_terms)
+        for term in new_canonicals:
+            if term not in existing_set:
+                existing_set.add(term)
+                merged.append(term)
+                added_terms += 1
+        if added_terms:
+            glossary_mod.save(merged)
+
+    added_rules = 0
+    if new_rules:
+        existing = replacements_mod.load()
+        existing_pairs = {(r.src, r.dst) for r in existing}
+        to_add = [r for r in new_rules if (r.src, r.dst) not in existing_pairs]
+        if to_add:
+            replacements_mod.save(existing + to_add)
+            added_rules = len(to_add)
+
+    if added_terms or added_rules:
+        print(
+            f"Done. Added {added_terms} glossary term(s) and "
+            f"{added_rules} replacement rule(s)."
+        )
+    else:
+        print("No changes.")
+
+    return 0
+
+
 def run_cli(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
     if args.doctor:
         return _run_doctor()
+
+    if args.suggest_replacements:
+        return _run_suggest_glossary(args.scan_dir or "")
 
     if args.setup:
         return _run_setup()

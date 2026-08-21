@@ -34,7 +34,10 @@
 
 ## Features
 
-- **Record directly in the TUI** — mic capture with pause/resume, auto-transcribes on stop
+- **Transcribes while you record** — 60–90 s chunks are cut at natural pauses and transcribed in the background, so the transcript is ready seconds after you stop instead of an hour later
+- **Survives a crash** — audio is written as headerless raw PCM with no close step, so killing the terminal cannot corrupt it. Unfinished sessions are found on the next launch and can be resumed, finished, or discarded
+- **Apple GPU acceleration** — MLX runs Whisper on the Metal GPU at 7.8–10.9× realtime, against 0.86× on the CPU path. Falls back automatically off Apple Silicon
+- **Automatic gain correction** — quiet recordings are the single largest cause of Whisper hallucination loops; input is normalized to −18 dBFS before transcription (the archived audio keeps its original level)
 - **Or drop an existing file** — m4a, mp3, wav, flac, webm, mp4 supported
 - **Korean-first** — Whisper large-v3, fixed `ko` language, VAD always on to prevent hallucinations on silence
 - **English code-switching** — three-layer defense (initial_prompt + hotwords + post-process replacements) keeps project names and technical terms intact
@@ -110,7 +113,9 @@ Run `mynah` with no arguments to open the TUI.
 
 **Main screen** — press `R` or `Space` to start recording, `F` to open an existing audio file, `S` for settings, `G` for glossary, `Q` to quit.
 
-**Recording screen** — microphone captures at 16 kHz mono. The level meter shows live input amplitude. `Space` to pause/resume. `S` to stop and start transcription automatically.
+**Recording screen** — microphone captures at 16 kHz mono. The level meter shows live input amplitude, and transcribed text appears in the panel below as each chunk finishes. `Space` to pause/resume, `S` to stop, `Esc` to cancel and discard.
+
+**Recovering an unfinished session** — if mynah was killed mid-recording, the main screen shows a banner. Press `U` to resume recording into the same session, finalize what was captured, or discard it. Nothing is deleted until you confirm twice.
 
 **Settings** (`S` from anywhere) — toggle speaker diarization, word-level timestamps, and denoising with on/off switches; switch the Whisper model and input language; set your HuggingFace token inline without leaving the TUI.
 
@@ -129,7 +134,7 @@ mynah <audio_file> [flags]
 | `--diarize`           | Speaker diarization (SPEAKER_NN: labels)        |
 | `--timestamps`        | Word-level timestamps ([HH:MM:SS] prefixes)     |
 | `--denoise`           | Denoise with Demucs (requires `mynah-stt[denoise]`) |
-| `--model`             | `large-v3` (default) or `large-v3-turbo`        |
+| `--model`             | Whisper model name (default `large-v3`)         |
 | `--lang`              | `ko` (default), `en`, `auto`                    |
 | `--setup`             | Interactive HuggingFace token wizard            |
 | `--doctor`            | System dependency health check                  |
@@ -176,21 +181,55 @@ Set `regex = true` on any rule to use Python regex syntax.
 | `~/.config/mynah/glossary.txt`      | Domain vocabulary (one term per line) |
 | `~/.config/mynah/replacements.toml` | Post-processing find/replace rules    |
 
+### Recording sessions
+
+Each recording gets its own folder under `~/Documents/mynah-recordings/`:
+
+```
+2026-08-12-145934/
+├── audio.pcm         raw 16 kHz mono, appended as you speak — no header to corrupt
+├── transcript.jsonl  one line per finished chunk
+├── session.json      options + status
+├── meeting.wav       written when the session is finalized
+└── meeting.txt       the transcript
+```
+
+`audio.pcm` deliberately has no header. A WAV header stores the total length
+and can only be written when the file is closed, so a process killed
+mid-recording leaves an unreadable file. Headerless PCM is valid at every
+instant, and the header is added afterwards from the file size — the same code
+path for a normal stop and for a crash recovery.
+
 ---
 
 ## Performance
 
-Estimates for a 1-hour Korean meeting on MacBook Pro M5:
+Measured on a MacBook Pro M5 with `large-v3`, on real Korean meeting audio.
 
-| Pipeline                               | Time    |
-| -------------------------------------- | ------- |
-| Transcription only (`large-v3`)        | ~15 min |
-| + Speaker diarization                  | ~25 min |
-| + Diarization + timestamps + denoising | ~35 min |
+| Backend                     | Speed vs. realtime |
+| --------------------------- | ------------------ |
+| MLX — Metal GPU             | **7.8 – 10.9×**    |
+| CTranslate2 — CPU, int8     | 0.86×              |
 
-`large-v3-turbo` runs ~3–5× faster with a small accuracy trade-off.
+CPU inference is slower than the recording itself, which is why a one-hour
+meeting used to mean an hour of waiting. On the GPU path the transcription
+keeps pace with the microphone, so a chunk is finished long before the next
+one is recorded and the wait after you press stop is a few seconds.
 
-The pipeline runs on CPU + int8 quantization (CTranslate2 / faster-whisper). On M5 this is fast enough that GPU/Neural Engine paths are not necessary.
+Dropping int8 quantization along with the CPU makes the GPU path both faster
+**and** more accurate — quantization was a compromise the CPU forced.
+
+Speaker diarization is the exception. It needs word-level timestamps and
+global speaker clustering across the whole meeting, neither of which
+per-chunk transcription produces, so enabling it re-runs the full file
+pipeline after recording ends. Expect a wait proportional to the meeting
+length.
+
+Check which backend you are actually on:
+
+```bash
+mynah --doctor        # reports backend, model, and last input level
+```
 
 ---
 
@@ -211,6 +250,8 @@ Common issues and fixes:
 | `list_audio_backends missing` | `pipx runpip mynah-stt install --upgrade torchaudio`                                                 |
 | Python 3.13+ not supported    | `brew install python@3.12` then `pipx install mynah-stt --python /opt/homebrew/bin/python3.12 --force` |
 | Microphone not captured       | macOS System Settings → Sound → Input → select the correct device                                 |
+| Words repeated over and over  | The recording is too quiet. `mynah --doctor` reports the input level; below about −30 dBFS Whisper starts hallucinating. Move the mic closer or raise the input gain in System Settings → Sound → Input |
+| Recording lost after a crash  | It is not. Relaunch `mynah` — the main screen offers the unfinished session under `U`             |
 
 ---
 
@@ -230,18 +271,34 @@ pytest tests/
 ruff check .
 ```
 
-The codebase is organized so that the **core pipeline** (`mynah/core/`) has no UI dependencies — TUI and CLI are thin wrappers over `pipeline.run()`. Unit-testable pure modules (`format`, `glossary`, `replacements`, `settings`, `model_cache`, `record`) cover the logic that doesn't need ML model downloads.
+`mynah/core/` and `mynah/config/` have no UI dependencies; the TUI and CLI are
+thin wrappers over them. ML packages are imported lazily inside the functions
+that need them, so the whole test suite runs without downloading a model.
 
 ```
 mynah/
-├── core/         # pipeline orchestration + ML wrappers
-├── config/       # settings, glossary, replacements (no ML deps)
-├── cli.py        # argparse entry point
-├── tui/          # Textual app + screens
-│   ├── screens/  # main, record, progress, result, settings, editor
-│   └── app.css   # color theme
-└── app.py        # dispatches TUI vs CLI based on argv
+├── core/
+│   ├── session.py    # session folder, raw PCM, JSONL, crash recovery
+│   ├── live.py       # chunk transcription worker + hallucination guard
+│   ├── record.py     # mic capture, silence-based chunk boundaries
+│   ├── audio.py      # ffmpeg normalize + gain correction
+│   ├── transcribe.py # MLX / WhisperX backend dispatch
+│   └── pipeline.py   # file pipeline + session finalization
+├── config/           # settings, glossary, replacements (no ML deps)
+├── tui/              # Textual app + screens
+└── app.py            # dispatches TUI vs CLI based on argv
 ```
+
+There are two pipelines. **Live recording** streams PCM to a session folder
+while a worker transcribes silence-cut chunks into `transcript.jsonl`;
+`finalize_session()` renders it and wraps the audio into a WAV. **File input**
+(`pipeline.run()`) is the original path: normalize, optional denoise,
+whole-file transcribe, optional diarize, render.
+
+MLX has no beam search, and beam search is what suppressed Whisper's
+repetition loops on the CPU path. `core/live.py` therefore checks each chunk
+for a loop and retries it through WhisperX with `beam_size=5`, falling back to
+an explicit gap marker rather than writing garbage or dropping audio silently.
 
 ---
 
@@ -252,6 +309,8 @@ Apache-2.0. See [LICENSE](https://github.com/rlawjdghksdlqslek/mynah-stt/blob/ma
 ## Acknowledgments
 
 - [OpenAI Whisper](https://github.com/openai/whisper) — speech recognition model
+- [MLX](https://github.com/ml-explore/mlx) — Apple Silicon array framework
+- [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) — Whisper on the Metal GPU
 - [WhisperX](https://github.com/m-bain/whisperX) — alignment + diarization wrapper
 - [faster-whisper](https://github.com/SYSTRAN/faster-whisper) — CTranslate2-accelerated Whisper inference
 - [pyannote-audio](https://github.com/pyannote/pyannote-audio) — speaker diarization

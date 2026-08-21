@@ -52,3 +52,12 @@ Thumbs.db
 /scratch/
 tests/samples/*.wav.txt
 tests/samples/*.m4a.txt
+.venv-dev/
+
+# Development-only (not shipped)
+docs/superpowers/
+tools/
+0.2-review.md
+CLAUDE.md
+uv.lock
+.superpowers/

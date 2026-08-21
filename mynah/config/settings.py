@@ -22,6 +22,9 @@ class Settings:
     model: str = "large-v3"
     language: str = "ko"
     hf_token: str = ""
+    backend: str = "auto"
+    chunk_seconds: int = 60
+    live_transcribe: bool = True
 
     def to_options(self) -> dict:
         return asdict(self)

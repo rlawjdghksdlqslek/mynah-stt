@@ -62,3 +62,27 @@ def test_to_options_dict():
     assert opts["diarize"] is True
     assert opts["model"] == "turbo"
     assert "hf_token" in opts
+
+
+class TestZeroThreeSettings:
+    def test_new_fields_have_defaults(self):
+        settings_obj = s.Settings()
+        assert settings_obj.backend == "auto"
+        assert settings_obj.chunk_seconds == 60
+        assert settings_obj.live_transcribe is True
+
+    def test_new_fields_round_trip(self, tmp_config_dir):
+        s.save(s.Settings(backend="whisperx", live_transcribe=False))
+        loaded = s.load()
+
+        assert loaded.backend == "whisperx"
+        assert loaded.live_transcribe is False
+
+    def test_old_config_without_new_keys_still_loads(self, tmp_config_dir):
+        (tmp_config_dir / "config.toml").write_text(
+            'diarize = true\nmodel = "large-v3"\n', encoding="utf-8"
+        )
+        loaded = s.load()
+
+        assert loaded.diarize is True
+        assert loaded.backend == "auto"  # default fills in

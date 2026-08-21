@@ -39,6 +39,131 @@ def pick_compute_type() -> str:
     return "int8"
 
 
+MLX_REPO_MAP = {
+    "large-v3": "mlx-community/whisper-large-v3-mlx",
+}
+
+
+def mlx_repo_for(model_name: str) -> str:
+    return MLX_REPO_MAP.get(model_name, f"mlx-community/whisper-{model_name}-mlx")
+
+
+def _has_mlx() -> bool:
+    try:
+        import mlx_whisper  # type: ignore # noqa: F401
+    except Exception:
+        # Not just ImportError: a half-installed mlx raises OSError/RuntimeError
+        # from the Metal dylib load. Any failure here means "no usable MLX",
+        # and the whole point of auto-detection is to fall back, not crash.
+        return False
+    return True
+
+
+def pick_backend(preference: str = "auto") -> str:
+    """Resolve which engine to use.
+
+    MLX runs on the Mac's GPU; CTranslate2 (WhisperX) has no Metal backend and
+    is CPU-only — measured at 0.86x realtime, i.e. slower than the recording
+    itself. MLX is the default wherever it is available.
+    """
+    if preference == "auto":
+        return "mlx" if _has_mlx() else "whisperx"
+    if preference == "mlx":
+        if not _has_mlx():
+            raise TranscribeError(
+                "backend='mlx' requested but mlx-whisper is not installed. "
+                "Install: pip install mlx-whisper (Apple Silicon only)"
+            )
+        return "mlx"
+    if preference == "whisperx":
+        return "whisperx"
+    raise TranscribeError(f"unknown backend {preference!r}; expected auto, mlx, or whisperx")
+
+
+def _transcribe_pcm_mlx(
+    pcm: bytes, *, model_name: str, language: str, initial_prompt: str
+) -> dict[str, Any]:
+    import mlx_whisper  # type: ignore
+    import numpy as np  # type: ignore
+
+    audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+    kwargs: dict[str, Any] = {
+        "path_or_hf_repo": mlx_repo_for(model_name),
+        "language": language if language != "auto" else None,
+    }
+    if initial_prompt:
+        kwargs["initial_prompt"] = initial_prompt
+    # mlx-whisper 0.4.3 raises NotImplementedError for beam_size — greedy only.
+    # Gain normalization plus chunking covers what beam search was suppressing;
+    # live.py retries any chunk that still loops on the WhisperX path.
+    result = mlx_whisper.transcribe(audio, **kwargs)
+    return {
+        "segments": result.get("segments", []),
+        "language": result.get("language", language),
+        "text": result.get("text", ""),
+    }
+
+
+def _transcribe_pcm_whisperx(
+    pcm: bytes,
+    *,
+    model_name: str,
+    language: str,
+    initial_prompt: str,
+    beam_size: int = 5,
+) -> dict[str, Any]:
+    """CPU path. Also the retry path for chunks that loop under MLX greedy —
+    beam search suppresses the repetition that greedy falls into."""
+    import numpy as np  # type: ignore
+    from faster_whisper import WhisperModel  # type: ignore
+
+    audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+    model = WhisperModel(
+        model_name,
+        device="cpu",
+        compute_type=pick_compute_type(),
+    )
+    segs, info = model.transcribe(
+        audio,
+        language=language if language != "auto" else None,
+        beam_size=beam_size,
+        initial_prompt=initial_prompt or None,
+    )
+    out = [{"start": s.start, "end": s.end, "text": s.text} for s in segs]
+    return {
+        "segments": out,
+        "language": getattr(info, "language", language),
+        "text": " ".join(s["text"].strip() for s in out),
+    }
+
+
+def transcribe_pcm(
+    pcm: bytes,
+    *,
+    model_name: str = "large-v3",
+    language: str = "ko",
+    initial_prompt: str = "",
+    backend: str = "auto",
+    beam_size: int | None = None,
+) -> dict[str, Any]:
+    """Transcribe a raw 16 kHz mono int16 PCM buffer (one chunk)."""
+    chosen = pick_backend(backend)
+    if chosen == "mlx":
+        return _transcribe_pcm_mlx(
+            pcm,
+            model_name=model_name,
+            language=language,
+            initial_prompt=initial_prompt,
+        )
+    return _transcribe_pcm_whisperx(
+        pcm,
+        model_name=model_name,
+        language=language,
+        initial_prompt=initial_prompt,
+        beam_size=beam_size or 5,
+    )
+
+
 def transcribe(
     wav_path: Path,
     *,

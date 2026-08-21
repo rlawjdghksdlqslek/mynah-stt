@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 import struct
-import wave
 from unittest.mock import MagicMock
 
 import pytest
@@ -61,17 +60,15 @@ def fake_sd(monkeypatch):
 
 
 class TestAudioRecorderLifecycle:
-    def test_start_creates_wav_with_correct_header(self, fake_sd, tmp_path):
-        out = tmp_path / "rec.wav"
+    def test_start_creates_empty_pcm_file(self, fake_sd, tmp_path):
+        out = tmp_path / "rec.pcm"
         rec = record.AudioRecorder(output_path=out)
         rec.start()
         rec.stop()
 
-        # Re-open WAV to inspect header
-        with wave.open(str(out), "rb") as w:
-            assert w.getnchannels() == 1
-            assert w.getsampwidth() == 2
-            assert w.getframerate() == 16000
+        # Headerless: an untouched recording is a zero-byte file, not a header.
+        assert out.exists()
+        assert out.stat().st_size == 0
 
     def test_start_creates_input_stream_with_correct_params(self, fake_sd, tmp_path):
         rec = record.AudioRecorder(output_path=tmp_path / "rec.wav")
@@ -123,35 +120,26 @@ class TestAudioRecorderLifecycle:
 
 
 class TestAudioRecorderCallback:
-    def test_callback_writes_frames_to_wav(self, fake_sd, tmp_path):
-        out = tmp_path / "rec.wav"
+    def test_callback_appends_raw_bytes(self, fake_sd, tmp_path):
+        out = tmp_path / "rec.pcm"
         rec = record.AudioRecorder(output_path=out)
         rec.start()
 
-        # 4 samples = 8 bytes
         chunk = _int16_bytes([100, 200, 300, 400])
         rec._callback(chunk, 4, None, None)
-
         rec.stop()
 
-        with wave.open(str(out), "rb") as w:
-            assert w.getnframes() == 4
-            assert w.readframes(4) == chunk
+        assert out.read_bytes() == chunk
 
-    def test_callback_emits_level(self, fake_sd, tmp_path):
-        levels: list[float] = []
-        rec = record.AudioRecorder(
-            output_path=tmp_path / "rec.wav",
-            on_level=levels.append,
-        )
+    def test_level_property_reflects_last_callback(self, fake_sd, tmp_path):
+        rec = record.AudioRecorder(output_path=tmp_path / "rec.pcm")
         rec.start()
 
+        assert rec.level == 0.0
         rec._callback(_int16_bytes([16384] * 8), 8, None, None)
 
+        assert math.isclose(rec.level, 0.5, abs_tol=0.01)
         rec.stop()
-
-        assert len(levels) == 1
-        assert math.isclose(levels[0], 0.5, abs_tol=0.01)
 
     def test_callback_updates_duration(self, fake_sd, tmp_path):
         rec = record.AudioRecorder(output_path=tmp_path / "rec.wav")
@@ -163,22 +151,10 @@ class TestAudioRecorderCallback:
 
         rec.stop()
 
-    def test_level_callback_exception_does_not_crash(self, fake_sd, tmp_path):
-        def boom(_level: float) -> None:
-            raise RuntimeError("boom")
-
-        rec = record.AudioRecorder(
-            output_path=tmp_path / "rec.wav",
-            on_level=boom,
-        )
-        rec.start()
-        rec._callback(_int16_bytes([1000] * 4), 4, None, None)  # must not raise
-        rec.stop()
-
 
 class TestAudioRecorderPause:
     def test_pause_drops_frames(self, fake_sd, tmp_path):
-        out = tmp_path / "rec.wav"
+        out = tmp_path / "rec.pcm"
         rec = record.AudioRecorder(output_path=out)
         rec.start()
 
@@ -190,9 +166,8 @@ class TestAudioRecorderPause:
 
         rec.stop()
 
-        with wave.open(str(out), "rb") as w:
-            # 4 (pre-pause) + 0 (paused) + 4 (resumed) = 8 frames
-            assert w.getnframes() == 8
+        # 4 + 0 + 4 frames = 8 samples = 16 bytes
+        assert out.stat().st_size == 16
 
     def test_pause_freezes_duration(self, fake_sd, tmp_path):
         rec = record.AudioRecorder(output_path=tmp_path / "rec.wav")
@@ -208,15 +183,127 @@ class TestAudioRecorderPause:
         assert rec.is_paused is False
         rec.stop()
 
-    def test_pause_does_not_emit_level(self, fake_sd, tmp_path):
-        levels: list[float] = []
-        rec = record.AudioRecorder(
-            output_path=tmp_path / "rec.wav",
-            on_level=levels.append,
-        )
+    def test_pause_leaves_level_untouched(self, fake_sd, tmp_path):
+        rec = record.AudioRecorder(output_path=tmp_path / "rec.pcm")
         rec.start()
+        rec._callback(_int16_bytes([1000] * 8), 8, None, None)
+        before = rec.level
+
         rec.pause()
         rec._callback(_int16_bytes([32767] * 8), 8, None, None)
         rec.stop()
 
-        assert levels == []
+        assert rec.level == before
+
+
+class TestChunkBoundaries:
+    FPS = record.AudioRecorder.SAMPLERATE / record.AudioRecorder.BLOCKSIZE
+
+    def test_no_cut_before_minimum(self):
+        levels = [0.5] * int(30 * self.FPS)
+        assert record.find_cut(levels, 0, 0.01) is None
+
+    def test_hard_cut_when_never_quiet(self):
+        levels = [0.5] * int(200 * self.FPS)
+        cut, hard = record.find_cut(levels, 0, 0.01)
+
+        assert hard is True
+        assert cut == int(record.MAX_CHUNK_SECONDS * self.FPS)
+
+    def test_cuts_at_silence_after_minimum(self):
+        levels = [0.5] * int(200 * self.FPS)
+        at = int(70 * self.FPS)
+        for i in range(at, at + int(0.5 * self.FPS)):
+            levels[i] = 0.0
+
+        cut, hard = record.find_cut(levels, 0, 0.01)
+
+        assert hard is False
+        assert int(69 * self.FPS) < cut < int(72 * self.FPS)
+
+    def test_brief_silence_is_not_enough(self):
+        levels = [0.5] * int(200 * self.FPS)
+        at = int(70 * self.FPS)
+        for i in range(at, at + 2):  # ~0.13s, below SILENCE_SECONDS
+            levels[i] = 0.0
+
+        cut, hard = record.find_cut(levels, 0, 0.01)
+        assert hard is True  # fell through to the 90s ceiling
+
+    def test_second_chunk_starts_from_previous_cut(self):
+        levels = [0.5] * int(300 * self.FPS)
+        first, _ = record.find_cut(levels, 0, 0.01)
+        second, _ = record.find_cut(levels, first, 0.01)
+
+        assert second - first == int(record.MAX_CHUNK_SECONDS * self.FPS)
+
+    def test_threshold_sits_above_noise_floor(self):
+        quiet_room = [0.001] * 50 + [0.3] * 50
+        assert record.silence_threshold(quiet_room) > 0.001
+
+    def test_threshold_scales_with_loud_room(self):
+        quiet = record.silence_threshold([0.001] * 50 + [0.30] * 50)
+        loud = record.silence_threshold([0.010] * 50 + [0.60] * 50)
+        assert loud > quiet
+
+
+class TestRecorderChunks:
+    def test_pop_ready_chunk_returns_byte_range(self, fake_sd, tmp_path):
+        rec = record.AudioRecorder(output_path=tmp_path / "rec.pcm")
+        rec.start()
+
+        block = _int16_bytes([20000] * record.AudioRecorder.BLOCKSIZE)
+        fps = record.AudioRecorder.SAMPLERATE / record.AudioRecorder.BLOCKSIZE
+        for _ in range(int(record.MAX_CHUNK_SECONDS * fps) + 1):
+            rec._callback(block, record.AudioRecorder.BLOCKSIZE, None, None)
+
+        got = rec.pop_ready_chunk()
+        rec.stop()
+
+        assert got is not None
+        start, end, hard = got
+        assert start == 0
+        assert hard is True
+        assert end == int(record.MAX_CHUNK_SECONDS * fps) * record.AudioRecorder.BLOCKSIZE * 2
+
+    def test_resumed_recorder_offsets_ranges_past_existing_audio(self, fake_sd, tmp_path):
+        out = tmp_path / "rec.pcm"
+        out.write_bytes(b"\x00" * 64000)  # 2 s of prior audio
+        rec = record.AudioRecorder(output_path=out, base_byte=64000)
+        rec.start()
+
+        block = _int16_bytes([20000] * record.AudioRecorder.BLOCKSIZE)
+        fps = record.AudioRecorder.SAMPLERATE / record.AudioRecorder.BLOCKSIZE
+        for _ in range(int(record.MAX_CHUNK_SECONDS * fps) + 1):
+            rec._callback(block, record.AudioRecorder.BLOCKSIZE, None, None)
+
+        start, end, _hard = rec.pop_ready_chunk()
+        rec.stop()
+
+        # Must not point back into the audio from the previous run.
+        assert start == 64000
+        assert end > 64000
+
+    def test_pop_ready_chunk_none_when_too_short(self, fake_sd, tmp_path):
+        rec = record.AudioRecorder(output_path=tmp_path / "rec.pcm")
+        rec.start()
+        rec._callback(_int16_bytes([100] * 1024), 1024, None, None)
+
+        assert rec.pop_ready_chunk() is None
+        rec.stop()
+
+    def test_flush_final_chunk_returns_remainder(self, fake_sd, tmp_path):
+        rec = record.AudioRecorder(output_path=tmp_path / "rec.pcm")
+        rec.start()
+        rec._callback(_int16_bytes([100] * 1024), 1024, None, None)
+        rec.stop()
+
+        got = rec.flush_final_chunk()
+        assert got == (0, 2048, False)
+
+    def test_flush_final_chunk_none_when_empty(self, fake_sd, tmp_path):
+        rec = record.AudioRecorder(output_path=tmp_path / "rec.pcm")
+        rec.start()
+        rec.stop()
+
+        assert rec.flush_final_chunk() is None
