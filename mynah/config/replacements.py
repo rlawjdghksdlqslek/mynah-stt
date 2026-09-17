@@ -16,11 +16,11 @@ from __future__ import annotations
 
 import re
 import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 import tomli_w
-import tomllib
 
 from mynah.config.settings import config_dir
 

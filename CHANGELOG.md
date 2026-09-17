@@ -1,0 +1,121 @@
+# Changelog
+
+All notable changes to this project are documented here.
+
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+While the major version is 0, a breaking change raises the minor version.
+
+## [0.3.0] - 2026-09-17
+
+A UI/UX pass over the whole app, plus GPU transcription for file input.
+Read the **Breaking changes** section before upgrading.
+
+### Breaking changes
+
+- **Python 3.10 is no longer accepted.** The supported range is now 3.11–3.13
+  (`requires-python = ">=3.11,<3.14"`). The floor moved because
+  `config/settings.py` imports `tomllib`, which is stdlib only from 3.11 —
+  3.10 never actually worked. The ceiling is whisperx, which declares
+  `Requires-Python <3.14` in every published version.
+- **Python 3.13 is now supported.** `audioop` left the stdlib in 3.13; the new
+  `audioop-lts` dependency restores it on 3.13 and later.
+- **Recorded sessions write `<session-id>.txt`, not `meeting.txt`.** Every
+  recording used to produce a file with the same name, so they were
+  indistinguishable outside their folders. Scripts that read `meeting.txt`
+  need updating. The archived audio is still `meeting.wav`.
+- **The failed-chunk marker is English.** A chunk that cannot be transcribed
+  now reads `[00:01:05-00:02:05 transcription failed: repetition loop]`
+  instead of the previous Korean text. Anything grepping the old string needs
+  updating.
+- **File input without `--diarize` runs on MLX instead of WhisperX.** Same
+  model, different engine, so wording may differ slightly between runs made
+  before and after this release. `--diarize` is unchanged.
+- **The `chunk_seconds` setting was removed.** Nothing ever read it; chunk
+  length comes from constants in `core/record.py`. An existing
+  `config.toml` containing it still loads, and the key is ignored.
+
+### Fixed
+
+- **`Esc` while recording no longer deletes the recording.** It used to remove
+  the session folder with no confirmation, so one reflexive keypress during a
+  meeting destroyed the only copy of it. `Esc` now leaves the screen with the
+  session intact; the main screen's recovery banner offers finish, resume or
+  discard, and discard still needs two presses.
+- **The first-run download warning checked the wrong model.** The cache probe
+  only knew the WhisperX repository, so MLX users — the default on Apple
+  Silicon — were told a 3 GB download was pending when it was not, and told
+  the model was cached when it was not. `--doctor` reported the same error.
+- **The progress screen's "Cancel" did nothing.** It logged a cancellation
+  message and kept running. The binding is now `Back` and is inert until the
+  run finishes, which is what actually happens.
+- **"New recording" on the result screen returns to the main screen instead of
+  starting a recording.** It now starts one.
+- **The recording screen showed the placeholder text `Saving to: session
+  folder`.** It shows the real session path.
+- **`--doctor` rejected Python 3.13** although the package allowed it,
+  printing a failure and returning exit code 1 on a healthy install.
+
+### Added
+
+- **No-input warning while recording.** If the level stays near silence for
+  about five seconds, the status line warns that the microphone may be muted
+  or the wrong input device selected. A dead microphone used to be discovered
+  only after the meeting.
+- **First-chunk hint.** The live pane explains that the first lines appear
+  after about a minute, instead of sitting empty and looking hung.
+- **Elapsed clock on the progress screen**, so a long run is visibly alive.
+- **`O` opens the recordings folder** in Finder from the main screen.
+- **The file picker lists only audio.** Folders and decodable extensions are
+  shown; everything else is hidden, including dotfiles. Picking an
+  undecodable file used to fail only after the pipeline had started.
+- **The main screen responds to mouse clicks** on its entries.
+
+### Changed
+
+- **Settings save as you change them.** The Save and Cancel buttons are gone.
+  At 80x24 the screen was taller than the terminal and the Save button sat
+  below the fold; six toggles did not justify a commit step.
+- **Interface text and transcript markers are English throughout.** Korean
+  strings had crept into an otherwise English interface, and one of them
+  reached the transcript itself.
+- **Muted text contrast raised** from `#595959` to `#8C8C8C` on the dark
+  background, which moves it from roughly 2.5:1 to above the 4.5:1 minimum.
+
+### Removed
+
+- **`tui/screens/editor.py`.** It duplicated the glossary and replacement
+  editors that the term manager already provides. `--edit-glossary` and
+  `--edit-replacements` open the term manager's matching tab.
+
+### Performance
+
+- **File input transcribes on the GPU.** WhisperX is CPU-only and measures
+  0.86x realtime, so an hour of audio took over an hour. Everything except
+  `--diarize`, which needs WhisperX word alignment for speaker assignment,
+  now uses the MLX path the live recorder already used. Measured: 90 s of
+  meeting audio in 26 s including the model load. Hallucination loops are
+  caught per segment and replaced with a gap marker rather than retried over
+  the whole file.
+- **The faster-whisper model is cached between calls.** The loop-retry path
+  rebuilt it from disk — about 1.5 GB — once per bad chunk.
+
+## [0.2.0] - 2026-08-21
+
+- Live transcription during recording, in 60–90 s chunks cut at silence.
+- Crash-safe sessions: headerless PCM plus a JSONL transcript, recoverable
+  from the main screen after an unclean exit.
+- MLX backend for Apple Silicon GPUs, with automatic fallback to WhisperX.
+- Automatic gain correction, the largest single cause of hallucination loops.
+- Term manager: glossary, replacements, and phonetic clustering of
+  misrecognized terms across past transcripts.
+- `mynah --doctor` health check.
+
+## [0.1.0] - 2026-05-09
+
+- First release: audio file in, transcript out, with optional speaker
+  diarization, timestamps, and denoising.
+
+[0.3.0]: https://github.com/rlawjdghksdlqslek/mynah-stt/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/rlawjdghksdlqslek/mynah-stt/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/rlawjdghksdlqslek/mynah-stt/releases/tag/v0.1.0

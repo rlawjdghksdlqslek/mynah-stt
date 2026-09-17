@@ -38,8 +38,8 @@ def normalize_gain(pcm: bytes, target_dbfs: float = TARGET_DBFS) -> bytes:
 
     Used for the live-chunk path; file input goes through ffmpeg's loudnorm.
     """
-    # ponytail: audioop is deprecated and gone in 3.13. The project pins
-    # <3.13 for torch anyway; switch to numpy if that pin ever lifts.
+    # audioop left the stdlib in 3.13; the audioop-lts dependency puts the
+    # same module back. Switch to numpy only if that package stops shipping.
     if not pcm:
         return pcm
     if len(pcm) % SAMPWIDTH:

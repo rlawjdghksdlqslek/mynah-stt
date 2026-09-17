@@ -17,7 +17,7 @@ class RecordScreen(Screen):
     BINDINGS = [
         ("space", "toggle_pause", "Pause/Resume"),
         ("s", "stop", "Stop & Transcribe"),
-        ("escape", "cancel", "Cancel"),
+        ("escape", "leave", "Exit (keep recording)"),
     ]
 
     DEFAULT_CSS = """
@@ -59,6 +59,9 @@ class RecordScreen(Screen):
     }
     """
 
+    SILENT_LEVEL = 0.005
+    SILENT_TICKS = 25  # 0.2 s poll -> about 5 s before the warning appears
+
     def __init__(self, session=None) -> None:
         super().__init__()
         self._session = session
@@ -66,6 +69,7 @@ class RecordScreen(Screen):
         self._timer = None
         self._worker = None
         self._worker_stop = None
+        self._silent_ticks = 0
 
     def compose(self) -> ComposeResult:
         settings = settings_mod.load()
@@ -91,7 +95,8 @@ class RecordScreen(Screen):
             yield Static(f"Will apply: {opts_summary}", classes="info")
             yield Static("Saving to: session folder", classes="info", id="save_label")
             yield Static(
-                "Space · Pause/Resume    S · Stop    Esc · Cancel", classes="info"
+                "Space · Pause/Resume    S · Stop    Esc · Exit (keeps the recording)",
+                classes="info",
             )
         yield Footer()
 
@@ -140,8 +145,18 @@ class RecordScreen(Screen):
             self.app.pop_screen()
             return
 
+        self.query_one("#save_label", Static).update(
+            f"Saving to: {self._session.dir}"
+        )
+
         if settings.live_transcribe:
             self._start_worker(settings)
+            # Chunks are cut at a silence gap no earlier than MIN_CHUNK_SECONDS,
+            # so this pane stays empty for the first minute. Say so, or it
+            # reads as a hang.
+            self.query_one("#live_text", RichLog).write(
+                "Listening. The first lines appear after about a minute."
+            )
         # The audio callback must not touch Textual; poll instead.
         self._timer = self.set_interval(0.2, self._refresh_timer)
 
@@ -173,10 +188,20 @@ class RecordScreen(Screen):
             f"⏸ PAUSED   {timestr}" if self._recorder.is_paused
             else f"● REC   {timestr}"
         )
-        self.query_one("#status_label", Static).update(label)
 
         # Square-root scaling: quiet/distant voices become visible.
         level = self._recorder.level
+
+        # A muted mic or a wrong input device produces a full-length recording
+        # of nothing, discovered only after the meeting. Say it during.
+        if level < self.SILENT_LEVEL and not self._recorder.is_paused:
+            self._silent_ticks += 1
+        else:
+            self._silent_ticks = 0
+        if self._silent_ticks >= self.SILENT_TICKS:
+            label += "   ⚠ NO INPUT — check the mic"
+        self.query_one("#status_label", Static).update(label)
+
         visual = math.sqrt(level) if level > 0.0 else 0.0
         self.query_one("#level_meter", ProgressBar).update(progress=int(visual * 100))
 
@@ -263,7 +288,7 @@ class RecordScreen(Screen):
             if self._timer is not None:
                 self._timer.stop()
             self._recorder.stop()
-            self.query_one("#status_label", Static).update("⏳ 마지막 구간 전사 중...")
+            self.query_one("#status_label", Static).update("⏳ Transcribing the final chunk...")
             await self._stop_worker()
 
             from mynah.config import settings as settings_mod
@@ -283,15 +308,18 @@ class RecordScreen(Screen):
         except Exception as exc:  # noqa: BLE001
             self.notify(f"Stop failed: {exc}", severity="error")
 
-    async def action_cancel(self) -> None:
-        import shutil
+    async def action_leave(self) -> None:
+        """Leave without transcribing. The session stays on disk.
 
+        This used to rmtree the session: one reflexive Esc during a meeting
+        destroyed the only copy of it. The main screen's recovery banner
+        already offers finish / resume / discard, and its discard needs two
+        presses. Nothing here needs to delete anything.
+        """
         if self._recorder is not None:
             self._recorder.stop()
             self._recorder = None
         if self._timer is not None:
             self._timer.stop()
-        await self._stop_worker()  # must complete before the rmtree
-        if self._session is not None:
-            shutil.rmtree(self._session.dir, ignore_errors=True)
+        await self._stop_worker()
         self.app.pop_screen()

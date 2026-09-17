@@ -122,7 +122,7 @@ class TestTranscribeChunk:
             language="ko", prompt="", backend="mlx", transcribe_fn=fn,
         )
         assert seg["failed"] is True
-        assert "전사 실패" in seg["text"]
+        assert "transcription failed" in seg["text"]
 
 
 class TestRunWorker:
@@ -220,7 +220,7 @@ class TestRunWorker:
         # 3 chunks retried (mlx+whisperx = 2 calls each), then retries stop
         # and later chunks cost one call each.
         assert calls["backends"].count("whisperx") == live.MAX_CONSECUTIVE_RETRIES
-        assert all("전사 실패" in x["text"] for x in session_mod.read_segments(s))
+        assert all("transcription failed" in x["text"] for x in session_mod.read_segments(s))
 
     def test_worker_survives_a_raising_transcribe_fn(self, tmp_path):
         s = session_mod.create({}, root=tmp_path)
@@ -247,7 +247,7 @@ class TestRunWorker:
         segs = session_mod.read_segments(s)
         # The bad chunk becomes a gap; the worker keeps going.
         assert len(segs) == 2
-        assert "전사 실패" in segs[0]["text"]
+        assert "transcription failed" in segs[0]["text"]
         assert segs[1]["text"] == "그 다음 청크"
 
     def test_failed_chunk_does_not_poison_next_context(self, tmp_path):
@@ -266,7 +266,7 @@ class TestRunWorker:
         )
 
         # The gap marker must never be handed to the next chunk as context.
-        assert all("전사 실패" not in p for p in calls["prompts"])
+        assert all("transcription failed" not in p for p in calls["prompts"])
 
     def test_segment_timestamps_are_meeting_relative(self, tmp_path):
         s = session_mod.create({}, root=tmp_path)
@@ -286,3 +286,18 @@ class TestRunWorker:
         seg = session_mod.read_segments(s)[0]
         assert seg["start"] == 1.0
         assert abs(seg["end"] - 2.0) < 0.001
+
+
+class TestGuardSegments:
+    def test_replaces_only_the_looping_segment(self):
+        segs = [
+            {"start": 0.0, "end": 5.0, "text": "정상적인 회의 발언입니다"},
+            {"start": 5.0, "end": 9.0, "text": "Crystal " * 20},
+        ]
+        live.guard_segments(segs)
+        assert segs[0]["text"] == "정상적인 회의 발언입니다"
+        assert "transcription failed" in segs[1]["text"]
+        assert "00:00:05-00:00:09" in segs[1]["text"]
+
+    def test_empty_list_is_fine(self):
+        assert live.guard_segments([]) == []

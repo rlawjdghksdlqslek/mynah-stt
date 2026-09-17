@@ -23,3 +23,11 @@ class TestIsWhisperCached:
         monkeypatch.setattr(model_cache, "_HF_CACHE_DIR", tmp_path)
         (tmp_path / "models--Systran--faster-whisper-large-v3-turbo").mkdir()
         assert model_cache.is_whisper_cached(model="turbo") is True
+
+
+class TestBackendSelectsTheRightRepo:
+    def test_mlx_and_whisperx_dirs_are_independent(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(model_cache, "_HF_CACHE_DIR", tmp_path)
+        (tmp_path / "models--mlx-community--whisper-large-v3-mlx").mkdir()
+        assert model_cache.is_whisper_cached("large-v3", "mlx") is True
+        assert model_cache.is_whisper_cached("large-v3", "whisperx") is False

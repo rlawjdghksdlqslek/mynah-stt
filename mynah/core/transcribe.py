@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +105,19 @@ def _transcribe_pcm_mlx(
     }
 
 
+@lru_cache(maxsize=2)
+def _load_faster_whisper(model_name: str, compute_type: str):
+    """One model instance per (model, compute_type).
+
+    Constructing WhisperModel reads ~1.5 GB from disk. The loop-retry path
+    calls this once per bad chunk, so building it fresh each time was the
+    dominant cost of a noisy meeting.
+    """
+    from faster_whisper import WhisperModel  # type: ignore
+
+    return WhisperModel(model_name, device="cpu", compute_type=compute_type)
+
+
 def _transcribe_pcm_whisperx(
     pcm: bytes,
     *,
@@ -115,14 +129,9 @@ def _transcribe_pcm_whisperx(
     """CPU path. Also the retry path for chunks that loop under MLX greedy —
     beam search suppresses the repetition that greedy falls into."""
     import numpy as np  # type: ignore
-    from faster_whisper import WhisperModel  # type: ignore
 
     audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
-    model = WhisperModel(
-        model_name,
-        device="cpu",
-        compute_type=pick_compute_type(),
-    )
+    model = _load_faster_whisper(model_name, pick_compute_type())
     segs, info = model.transcribe(
         audio,
         language=language if language != "auto" else None,
@@ -161,6 +170,34 @@ def transcribe_pcm(
         language=language,
         initial_prompt=initial_prompt,
         beam_size=beam_size or 5,
+    )
+
+
+def transcribe_wav(
+    wav_path: Path,
+    *,
+    model_name: str = "large-v3",
+    language: str = "ko",
+    initial_prompt: str = "",
+    backend: str = "auto",
+) -> dict[str, Any]:
+    """Transcribe a whole 16 kHz mono WAV on the fastest available engine.
+
+    `transcribe()` below is pinned to WhisperX on the CPU at 0.86x realtime,
+    because diarization needs its word-level alignment. Everything else can
+    take the MLX GPU path the live recorder already uses, which measures
+    7.8-10.9x realtime on the same model.
+    """
+    import wave
+
+    with wave.open(str(wav_path), "rb") as w:
+        pcm = w.readframes(w.getnframes())
+    return transcribe_pcm(
+        pcm,
+        model_name=model_name,
+        language=language,
+        initial_prompt=initial_prompt,
+        backend=backend,
     )
 
 

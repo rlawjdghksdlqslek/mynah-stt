@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from textual.app import App
 
-from mynah.tui.screens.editor import EditorScreen, EditorTarget
 from mynah.tui.screens.main import MainScreen
+from mynah.tui.screens.term_manager import TermManagerScreen
 from mynah.tui.widgets import patch_header_title_race
 
 # Every screen composes a Header, and an unpatched one can kill the app during
@@ -23,14 +23,16 @@ class MynahApp(App):
 
 
 class _EditorOnlyApp(App):
-    """A trimmed app that opens straight into an editor screen."""
+    """A trimmed app that opens straight into the term manager."""
 
-    def __init__(self, target: EditorTarget):
+    CSS_PATH = "app.css"
+
+    def __init__(self, tab: str):
         super().__init__()
-        self._target = target
+        self._tab = tab
 
     def on_mount(self) -> None:
-        self.push_screen(EditorScreen(self._target), self._on_closed)
+        self.push_screen(TermManagerScreen(initial_tab=self._tab), self._on_closed)
 
     def _on_closed(self, _result: object) -> None:
         self.exit(0)
@@ -43,6 +45,5 @@ def run() -> int:
 
 def run_editor_only(target: str) -> int:
     """Used by `mynah --edit-glossary` and `mynah --edit-replacements`."""
-    et = EditorTarget(target)
-    _EditorOnlyApp(et).run()
+    _EditorOnlyApp("glossary" if target == "glossary" else "replacements").run()
     return 0

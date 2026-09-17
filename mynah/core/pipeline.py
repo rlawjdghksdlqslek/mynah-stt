@@ -105,15 +105,32 @@ def run(
         def _t_progress(message: str, p: float | None) -> None:
             _emit("transcribe", message, p)
 
-        result = transcribe_mod.transcribe(
-            wav,
-            model_name=options.model,
-            language=options.language,
-            initial_prompt=glossary_mod.as_initial_prompt(terms),
-            hotwords=glossary_mod.as_hotwords(terms),
-            align_words=options.timestamps or options.diarize,
-            on_progress=_t_progress,
-        )
+        if options.diarize:
+            # Speaker assignment needs WhisperX word-level alignment, which
+            # only exists on the CPU path.
+            result = transcribe_mod.transcribe(
+                wav,
+                model_name=options.model,
+                language=options.language,
+                initial_prompt=glossary_mod.as_initial_prompt(terms),
+                hotwords=glossary_mod.as_hotwords(terms),
+                align_words=True,
+                on_progress=_t_progress,
+            )
+        else:
+            from mynah.core.live import guard_segments
+
+            # --timestamps reads segment starts, which every engine returns,
+            # so only diarization is worth 0.86x realtime.
+            _t_progress("transcribing", 0.0)
+            result = transcribe_mod.transcribe_wav(
+                wav,
+                model_name=options.model,
+                language=options.language,
+                initial_prompt=glossary_mod.as_initial_prompt(terms),
+            )
+            guard_segments(result.get("segments", []))
+            _t_progress("transcribed", 1.0)
         stages_run.append("transcribe")
 
         if options.diarize:
@@ -260,7 +277,7 @@ def finalize_session(
     if rules:
         text = replacements_mod.apply(text, rules)
 
-    out_path = session.dir / "meeting.txt"
+    out_path = session.dir / f"{session.dir.name}.txt"
     out_path.write_text(text, encoding="utf-8")
     session_mod.set_status(session, session_mod.STATUS_DONE)
     _emit("format", f"wrote {out_path}", 1.0)

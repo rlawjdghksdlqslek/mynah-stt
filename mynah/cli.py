@@ -120,10 +120,10 @@ def _run_doctor() -> int:
 
     v = _sys.version_info
     py_str = f"Python {v.major}.{v.minor}.{v.micro}"
-    if (3, 10) <= (v.major, v.minor) < (3, 13):
+    if (3, 11) <= (v.major, v.minor) < (3, 14):
         ok(py_str, "compatible")
     else:
-        fail(py_str, "3.10–3.12 required (3.13+ not yet stable for ML stack)")
+        fail(py_str, "3.11–3.13 required (3.11 for tomllib, 3.13 ceiling from whisperx)")
 
     ffmpeg_path = shutil.which("ffmpeg")
     if ffmpeg_path:
@@ -191,9 +191,14 @@ def _run_doctor() -> int:
 
     print()
 
+    from mynah.core import transcribe as transcribe_mod
     from mynah.core.model_cache import is_whisper_cached
     settings = settings_mod.load()
-    if is_whisper_cached(settings.model):
+    try:
+        engine = transcribe_mod.pick_backend(settings.backend)
+    except transcribe_mod.TranscribeError:
+        engine = "whisperx"
+    if is_whisper_cached(settings.model, engine):
         ok(f"Whisper {settings.model}", "cached")
     else:
         warn(
@@ -209,13 +214,7 @@ def _run_doctor() -> int:
     print()
 
     # Backend and model — the user needs to see which engine is actually running
-    from mynah.core import transcribe as transcribe_mod
-
-    try:
-        backend = transcribe_mod.pick_backend(settings.backend)
-    except transcribe_mod.TranscribeError as exc:
-        backend = f"ERROR: {exc}"
-    print(f"  backend:            {backend}  (setting: {settings.backend})")
+    print(f"  backend:            {engine}  (setting: {settings.backend})")
     print(f"  model:              {settings.model}")
     print(f"  live transcribe:    {settings.live_transcribe}")
 

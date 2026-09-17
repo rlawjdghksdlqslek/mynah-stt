@@ -76,8 +76,23 @@ def mark_gap(seconds_start: float, seconds_end: float) -> str:
     """
     return (
         f"[{format_timestamp(seconds_start)}-{format_timestamp(seconds_end)} "
-        f"전사 실패 — 반복 오류]"
+        f"transcription failed: repetition loop]"
     )
+
+
+def guard_segments(segments: list[dict]) -> list[dict]:
+    """Replace hallucination-loop segments with a gap marker, in place.
+
+    The live path guards per chunk. Whole-file transcription gets the same
+    guard per returned segment, so one looping stretch costs that stretch
+    rather than the file.
+    """
+    for seg in segments:
+        if has_loop(seg.get("text", "")):
+            seg["text"] = mark_gap(
+                float(seg.get("start", 0.0)), float(seg.get("end", 0.0))
+            )
+    return segments
 
 
 TAIL_CHARS = 120
@@ -178,7 +193,6 @@ def run_worker(
                     start_seconds=start_seconds,
                     model_name=model_name, language=language, prompt=prompt,
                     backend=backend,
-                    # ponytail: 연속 3회 상한. 청크별 비용 추적이 필요해지면 적응형으로.
                     allow_retry=consecutive_retries < MAX_CONSECUTIVE_RETRIES,
                     transcribe_fn=transcribe_fn,
                 )

@@ -15,6 +15,17 @@ from textual.containers import Container, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, DirectoryTree, Footer, Header, Label, Static
 
+from mynah.core.audio import SUPPORTED_INPUT_EXTS
+
+
+class AudioTree(DirectoryTree):
+    def filter_paths(self, paths):
+        return [
+            p for p in paths
+            if not p.name.startswith(".")
+            and (p.is_dir() or p.suffix.lower() in SUPPORTED_INPUT_EXTS)
+        ]
+
 
 class FileBrowser(Screen):
     """Modal file picker for the 'open existing file' path."""
@@ -47,7 +58,8 @@ class FileBrowser(Screen):
         yield Header()
         with Container(id="browser_box"):
             yield Label("Pick an audio file (Enter to select, Esc to cancel)")
-            yield DirectoryTree(self._start)
+            # AudioTree hides everything ffmpeg cannot decode.
+            yield AudioTree(self._start)
         yield Footer()
 
     def on_directory_tree_file_selected(
@@ -84,18 +96,18 @@ class RecoveryScreen(Screen):
         mins = int(session_mod.duration_seconds(self._session) / 60)
         segs = len(session_mod.read_segments(self._session))
         with Container(id="recovery_box"):
-            yield Label(f"끝나지 않은 세션: {self._session.dir.name}")
-            yield Label(f"{mins}분 녹음됨 · {segs}개 구간 전사 완료")
-            yield Button("여기까지로 마무리하고 전사", id="btn_finish", variant="success")
-            yield Button("이어서 녹음", id="btn_resume")
-            yield Button("버리기", id="btn_discard", variant="error")
+            yield Label(f"Unfinished session: {self._session.dir.name}")
+            yield Label(f"{mins} min recorded · {segs} chunks transcribed")
+            yield Button("Finish and transcribe", id="btn_finish", variant="success")
+            yield Button("Resume recording", id="btn_resume")
+            yield Button("Discard", id="btn_discard", variant="error")
 
     def on_button_pressed(self, event) -> None:
         if event.button.id == "btn_discard" and not self._confirm_discard:
             # Deleting a session destroys the only copy of a recording.
             # Make the user say it twice.
             self._confirm_discard = True
-            event.button.label = "정말 버립니다 — 한 번 더 누르세요"
+            event.button.label = "Press again to delete for good"
             return
         self.dismiss(
             {
@@ -117,6 +129,7 @@ class MainScreen(Screen):
         ("s", "open_settings", "Settings"),
         ("g", "open_terms", "Terms"),
         Binding("t", "open_analyze", "Review terms", show=False),
+        ("o", "open_folder", "Recordings"),
         Binding("u", "resume_session", "Unfinished", show=False),
         ("q", "quit", "Quit"),
     ]
@@ -137,12 +150,12 @@ class MainScreen(Screen):
         margin-bottom: 0;
     }
     #record_hint {
-        color: #595959;
+        color: #8C8C8C;
         text-align: center;
         margin-bottom: 2;
     }
     #file_label {
-        color: #8C8C8C;
+        color: #D9D9D9;
         text-align: center;
         margin-top: 1;
     }
@@ -189,10 +202,21 @@ class MainScreen(Screen):
         unfinished = self.query_one("#unfinished_badge", Static)
         if pending:
             mins = int(session_mod.duration_seconds(pending[-1]) / 60)
-            extra = f" (외 {len(pending) - 1}개)" if len(pending) > 1 else ""
-            unfinished.update(f"끝나지 않은 세션 · 최근 {mins}분 녹음됨{extra}  (U)")
+            extra = f" (+{len(pending) - 1} more)" if len(pending) > 1 else ""
+            unfinished.update(f"Unfinished session · {mins} min recorded{extra}  (U)")
         else:
             unfinished.update("")
+
+    def on_click(self, event) -> None:
+        action = {
+            "record_label": self.action_record,
+            "record_hint": self.action_record,
+            "file_label": self.action_open_file,
+            "review_badge": self.action_open_analyze,
+            "unfinished_badge": self.action_resume_session,
+        }.get(getattr(event.widget, "id", None))
+        if action is not None:
+            action()
 
     def action_record(self) -> None:
         from mynah.tui.screens.record import RecordScreen
@@ -229,7 +253,7 @@ class MainScreen(Screen):
 
         pending = session_mod.list_unfinished()
         if not pending:
-            self.notify("끝나지 않은 세션이 없습니다")
+            self.notify("No unfinished sessions")
             return
         target = pending[-1]
         self.app.push_screen(
@@ -247,7 +271,7 @@ class MainScreen(Screen):
             try:
                 shutil.rmtree(target.dir)
             except OSError as exc:
-                self.notify(f"삭제 실패: {exc}", severity="error")
+                self.notify(f"Could not delete: {exc}", severity="error")
             self._update_badge()
             return
 
@@ -281,6 +305,15 @@ class MainScreen(Screen):
     def action_open_analyze(self) -> None:
         from mynah.tui.screens.term_manager import TermManagerScreen
         self.app.push_screen(TermManagerScreen(initial_tab="analyze"))
+
+    def action_open_folder(self) -> None:
+        import subprocess
+
+        from mynah.core import session as session_mod
+
+        root = session_mod.default_root()
+        root.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["open", str(root)], check=False)
 
     def action_quit(self) -> None:
         self.app.exit(0)

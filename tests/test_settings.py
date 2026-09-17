@@ -68,7 +68,6 @@ class TestZeroThreeSettings:
     def test_new_fields_have_defaults(self):
         settings_obj = s.Settings()
         assert settings_obj.backend == "auto"
-        assert settings_obj.chunk_seconds == 60
         assert settings_obj.live_transcribe is True
 
     def test_new_fields_round_trip(self, tmp_config_dir):

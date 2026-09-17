@@ -368,4 +368,4 @@ class TermManagerScreen(Screen):
             self._awaiting_confirm = True
             self.notify("Unsaved changes. Press Esc again to discard.", severity="warning")
             return
-        self.app.pop_screen()
+        self.dismiss()

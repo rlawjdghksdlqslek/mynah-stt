@@ -40,7 +40,7 @@ class ResultScreen(Screen):
         margin-bottom: 0;
     }
     #filename {
-        color: #595959;
+        color: #8C8C8C;
         margin-bottom: 1;
     }
     #clip_status {
@@ -106,9 +106,10 @@ class ResultScreen(Screen):
 
     @on(Button.Pressed, "#btn_new")
     def _on_new(self) -> None:
-        # Stack: [Main, Progress, Result] → pop twice to reach Main.
-        self.app.pop_screen()  # pop Result
-        self.app.pop_screen()  # pop Progress
+        from mynah.tui.screens.record import RecordScreen
+
+        self.action_back()
+        self.app.push_screen(RecordScreen())
 
     def action_back(self) -> None:
         # Stack: [Main, Progress, Result] → pop twice to reach Main.

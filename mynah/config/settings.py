@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import sys
+import tomllib
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 import tomli_w
-import tomllib
 from platformdirs import user_config_path
 
 CONFIG_DIR_NAME = "mynah"
@@ -23,7 +23,6 @@ class Settings:
     language: str = "ko"
     hf_token: str = ""
     backend: str = "auto"
-    chunk_seconds: int = 60
     live_transcribe: bool = True
 
     def to_options(self) -> dict:

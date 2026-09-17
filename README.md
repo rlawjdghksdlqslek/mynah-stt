@@ -4,7 +4,7 @@
 > Record directly or drop an audio file — get a clean `.txt` in minutes.  
 > No cloud. No per-meeting cost. Runs entirely on your Mac.
 
-[![Python 3.10–3.12](https://img.shields.io/badge/python-3.10–3.12-blue)](https://www.python.org)
+[![Python 3.11–3.13](https://img.shields.io/badge/python-3.11–3.13-blue)](https://www.python.org)
 [![License Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green)](https://github.com/rlawjdghksdlqslek/mynah-stt/blob/main/LICENSE)
 [![Platform macOS Apple Silicon](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-lightgrey)](https://www.apple.com/mac/)
 
@@ -71,7 +71,7 @@ Output filename: `<input>.txt`. On collision: `<input> (1).txt`, `<input> (2).tx
 | Requirement           | Version         | Install                                |
 | --------------------- | --------------- | -------------------------------------- |
 | macOS (Apple Silicon) | 14+             | —                                      |
-| Python                | **3.10 – 3.12** | `brew install python@3.12`             |
+| Python                | **3.11 – 3.13** | `brew install python@3.13`             |
 | ffmpeg                | any             | `brew install ffmpeg`                  |
 | pipx                  | any             | `brew install pipx && pipx ensurepath` |
 
@@ -113,7 +113,7 @@ Run `mynah` with no arguments to open the TUI.
 
 **Main screen** — press `R` or `Space` to start recording, `F` to open an existing audio file, `S` for settings, `G` for glossary, `Q` to quit.
 
-**Recording screen** — microphone captures at 16 kHz mono. The level meter shows live input amplitude, and transcribed text appears in the panel below as each chunk finishes. `Space` to pause/resume, `S` to stop, `Esc` to cancel and discard.
+**Recording screen** — microphone captures at 16 kHz mono. The level meter shows live input amplitude, and transcribed text appears in the panel below as each chunk finishes. `Space` to pause/resume, `S` to stop and transcribe, `Esc` to leave the screen with the recording kept (finish or discard it later from the main screen).
 
 **Recovering an unfinished session** — if mynah was killed mid-recording, the main screen shows a banner. Press `U` to resume recording into the same session, finalize what was captured, or discard it. Nothing is deleted until you confirm twice.
 
@@ -191,7 +191,7 @@ Each recording gets its own folder under `~/Documents/mynah-recordings/`:
 ├── transcript.jsonl  one line per finished chunk
 ├── session.json      options + status
 ├── meeting.wav       written when the session is finalized
-└── meeting.txt       the transcript
+└── 2026-09-17-1430.txt   the transcript
 ```
 
 `audio.pcm` deliberately has no header. A WAV header stores the total length

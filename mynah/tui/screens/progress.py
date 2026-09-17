@@ -33,8 +33,8 @@ STAGES = [
 
 class ProgressScreen(Screen):
     BINDINGS = [
-        ("q", "back_or_cancel", "Back / Cancel"),
-        ("escape", "back_or_cancel", "Back / Cancel"),
+        ("q", "back", "Back"),
+        ("escape", "back", "Back"),
     ]
 
     DEFAULT_CSS = """
@@ -97,6 +97,9 @@ class ProgressScreen(Screen):
             self._stages["denoise"].status = "skipped"
         if not self._options.diarize:
             self._stages["diarize"].status = "skipped"
+        self._label_name = session.dir.name if session else audio_path.name
+        self._elapsed = 0
+        self._clock = None
         self._result: PipelineResult | None = None
         self._error: BaseException | None = None
         self._done = False
@@ -104,8 +107,9 @@ class ProgressScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with Vertical(id="content"):
-            label_name = self._session.dir.name if self._session else self._audio_path.name
-            yield Static(f"Processing: {label_name}", classes="file_label")
+            yield Static(
+                f"Processing: {self._label_name}", id="file_label", classes="file_label"
+            )
             for name, _ in STAGES:
                 yield Static(self._render_stage_line(name), id=f"row_{name}", markup=True)
             yield ProgressBar(total=100, show_eta=False, id="bar")
@@ -115,8 +119,10 @@ class ProgressScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
+        from mynah.config import settings as settings_mod
         from mynah.core.model_cache import is_whisper_cached
         from mynah.core.pipeline import has_uncovered_audio
+        from mynah.core.transcribe import pick_backend
 
         # A session only skips Whisper when diarize is off AND its segments
         # already cover the audio — otherwise finalization transcribes the
@@ -126,33 +132,46 @@ class ProgressScreen(Screen):
             or self._options.diarize
             or has_uncovered_audio(self._session)
         )
-        if needs_whisper and not is_whisper_cached(self._options.model):
+        # Diarization is the only path still pinned to the WhisperX model.
+        engine = (
+            "whisperx" if self._options.diarize
+            else pick_backend(settings_mod.load().backend)
+        )
+        if needs_whisper and not is_whisper_cached(self._options.model, engine):
             self._log(
                 "First run: downloading Whisper model "
                 "(~3 GB, 5-15 min on broadband)..."
             )
             self._log("Subsequent runs use the cached model and start instantly.")
         self._log("Finalizing session..." if self._session else "Starting pipeline...")
+        self._clock = self.set_interval(1.0, self._tick)
         self.run_worker(self._do_run, thread=True, exclusive=True)
+
+    def _tick(self) -> None:
+        self._elapsed += 1
+        self.query_one("#file_label", Static).update(
+            f"Processing: {self._label_name}   "
+            f"{self._elapsed // 60:02d}:{self._elapsed % 60:02d} elapsed"
+        )
 
     def _render_stage_line(self, name: str) -> str:
         s = self._stages[name]
         icons = {
-            "waiting":  ("○", "#595959"),
+            "waiting":  ("○", "#8C8C8C"),
             "running":  ("▶", "#2DD4BF"),
             "done":     ("✓", "#52C41A"),
             "failed":   ("✗", "#FF4D4F"),
-            "skipped":  ("—", "#595959"),
+            "skipped":  ("—", "#8C8C8C"),
         }
         status_colors = {
-            "waiting":  "#595959",
+            "waiting":  "#8C8C8C",
             "running":  "#2DD4BF",
             "done":     "#52C41A",
             "failed":   "#FF4D4F",
-            "skipped":  "#595959",
+            "skipped":  "#8C8C8C",
         }
-        icon, icon_color = icons.get(s.status, ("○", "#595959"))
-        status_color = status_colors.get(s.status, "#595959")
+        icon, icon_color = icons.get(s.status, ("○", "#8C8C8C"))
+        status_color = status_colors.get(s.status, "#8C8C8C")
         label = s.label
         return (
             f"  [{icon_color}]{icon}[/{icon_color}]  "
@@ -211,6 +230,8 @@ class ProgressScreen(Screen):
 
     def _on_finished(self) -> None:
         self._done = True
+        if self._clock is not None:
+            self._clock.stop()
         if self._error is not None:
             for name in self._stages:
                 if self._stages[name].status == "running":
@@ -245,8 +266,8 @@ class ProgressScreen(Screen):
     def _on_back(self) -> None:
         self.app.pop_screen()
 
-    def action_back_or_cancel(self) -> None:
+    def action_back(self) -> None:
+        # No mid-run cancel: the pipeline holds no cancellation point, and a
+        # button that only logs "cancelling" is worse than no button.
         if self._done:
             self.app.pop_screen()
-        else:
-            self._log("Cancellation requested — finishing current stage...")

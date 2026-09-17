@@ -62,7 +62,6 @@ def patch_header_title_race() -> None:
         self.watch(self.screen, "title", set_title)
         self.watch(self.screen, "sub_title", set_title)
 
-    # ponytail: monkeypatch, because the bug is a third-party one-liner.
     # Delete this whole function once textual ships the NoMatches catch.
     _on_mount._mynah_patched = True
     Header._on_mount = _on_mount

@@ -24,12 +24,25 @@ _MODEL_DIR_BY_NAME = {
     "turbo": "models--Systran--faster-whisper-large-v3-turbo",
 }
 
+# MLX is the default engine on Apple Silicon and downloads a different repo.
+# Checking only the Systran directory told MLX users "cached" while 3 GB was
+# still to come, and warned about a download they had already made.
+_MLX_DIR_BY_NAME = {
+    "large-v3": "models--mlx-community--whisper-large-v3-mlx",
+    "large-v3-turbo": "models--mlx-community--whisper-large-v3-turbo",
+    "turbo": "models--mlx-community--whisper-large-v3-turbo",
+}
 
-def is_whisper_cached(model: str = "large-v3") -> bool:
-    """Return True if the named model appears to be in the HF cache."""
+
+def is_whisper_cached(model: str = "large-v3", backend: str = "whisperx") -> bool:
+    """Return True if the model for `backend` appears to be in the HF cache.
+
+    `backend` is a resolved engine name ("mlx" or "whisperx"), not a setting.
+    """
     if not _HF_CACHE_DIR.exists():
         return False
-    dir_name = _MODEL_DIR_BY_NAME.get(model)
+    table = _MLX_DIR_BY_NAME if backend == "mlx" else _MODEL_DIR_BY_NAME
+    dir_name = table.get(model)
     if dir_name is None:
         return False
     return (_HF_CACHE_DIR / dir_name).exists()

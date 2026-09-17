@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import (
     Button,
@@ -27,7 +27,7 @@ from mynah.config import settings as settings_mod
 
 class SettingsScreen(Screen):
     BINDINGS = [
-        ("escape", "cancel", "Cancel"),
+        ("escape", "close", "Close"),
     ]
 
     DEFAULT_CSS = """
@@ -37,7 +37,7 @@ class SettingsScreen(Screen):
     #content {
         margin: 1 2;
         padding: 1 2;
-        height: auto;
+        height: 1fr;
     }
 
     /* Toggle option row */
@@ -55,7 +55,7 @@ class SettingsScreen(Screen):
         text-style: bold;
     }
     .option_desc {
-        color: #595959;
+        color: #8C8C8C;
     }
     Switch {
         margin-left: 2;
@@ -74,16 +74,6 @@ class SettingsScreen(Screen):
         height: auto;
         margin-top: 1;
     }
-
-    /* Save / Cancel */
-    #buttons {
-        margin-top: 2;
-        height: auto;
-        align-horizontal: right;
-    }
-    #buttons Button {
-        margin-left: 2;
-    }
     """
 
     def __init__(self) -> None:
@@ -92,8 +82,9 @@ class SettingsScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
-        with Vertical(id="content"):
+        with VerticalScroll(id="content"):
 
+            yield Static("Changes are saved as you make them.", classes="muted")
             yield Static("Output", classes="section_title")
 
             with Horizontal(classes="option_row"):
@@ -162,14 +153,10 @@ class SettingsScreen(Screen):
                 if self.settings.hf_token:
                     yield Button("Clear", id="btn_token_clear")
             yield Input(
-                placeholder="Paste HuggingFace token (hf_xxx...)",
+                placeholder="Paste token and press Enter",
                 id="token_input",
                 password=True,
             )
-
-            with Horizontal(id="buttons"):
-                yield Button("Cancel", id="btn_cancel")
-                yield Button("Save", id="btn_save", variant="success")
 
         yield Footer()
 
@@ -193,35 +180,43 @@ class SettingsScreen(Screen):
         self.settings.hf_token = ""
         self.query_one("#token_status", Static).update(self._token_status_text())
         self.query_one("#token_input", Input).value = ""
+        settings_mod.save(self.settings)
 
-    @on(Button.Pressed, "#btn_cancel")
-    def _on_cancel(self) -> None:
-        self.dismiss(False)
+    @on(Input.Submitted, "#token_input")
+    def _on_token_submitted(self, event: Input.Submitted) -> None:
+        token = event.value.strip()
+        if not token:
+            return
+        self.settings.hf_token = token
+        settings_mod.save(self.settings)
+        event.input.display = False
+        self.query_one("#token_status", Static).update(self._token_status_text())
+        self.notify("Token saved.")
 
-    def action_cancel(self) -> None:
-        self.dismiss(False)
+    @on(Switch.Changed)
+    @on(RadioSet.Changed)
+    def _on_option_changed(self) -> None:
+        """Persist on every toggle.
 
-    @on(Button.Pressed, "#btn_save")
-    def _on_save(self) -> None:
+        A Save button needs to be found before it can be pressed, and at
+        80x24 this screen is taller than the terminal. Six toggles are not
+        worth a commit step.
+        """
         self.settings.diarize = self.query_one("#sw_diarize", Switch).value
         self.settings.timestamps = self.query_one("#sw_timestamps", Switch).value
         self.settings.denoise = self.query_one("#sw_denoise", Switch).value
-
-        if self.query_one("#rb_turbo", RadioButton).value:
-            self.settings.model = "large-v3-turbo"
-        else:
-            self.settings.model = "large-v3"
-
+        self.settings.model = (
+            "large-v3-turbo"
+            if self.query_one("#rb_turbo", RadioButton).value
+            else "large-v3"
+        )
         if self.query_one("#rb_en", RadioButton).value:
             self.settings.language = "en"
         elif self.query_one("#rb_auto", RadioButton).value:
             self.settings.language = "auto"
         else:
             self.settings.language = "ko"
-
-        token_input = self.query_one("#token_input", Input)
-        if token_input.display and token_input.value.strip():
-            self.settings.hf_token = token_input.value.strip()
-
         settings_mod.save(self.settings)
+
+    def action_close(self) -> None:
         self.dismiss(True)
