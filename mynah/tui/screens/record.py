@@ -70,6 +70,8 @@ class RecordScreen(Screen):
         self._worker = None
         self._worker_stop = None
         self._silent_ticks = 0
+        self._stopping = False
+        self._wait_dots = 0
 
     def compose(self) -> ComposeResult:
         settings = settings_mod.load()
@@ -178,6 +180,15 @@ class RecordScreen(Screen):
     def _refresh_timer(self) -> None:
         import math
 
+        if self._stopping:
+            # The worker still has the final chunk to transcribe, which takes
+            # tens of seconds. Without this the screen sits on one static line
+            # and reads as a hang.
+            self._wait_dots = (self._wait_dots + 1) % 4
+            self.query_one("#status_label", Static).update(
+                "⏳ Transcribing the final chunk" + "." * self._wait_dots
+            )
+            return
         if not self._recorder:
             return
         seconds = int(self._recorder.duration_seconds)
@@ -208,10 +219,8 @@ class RecordScreen(Screen):
     def _start_worker(self, settings) -> None:
         import threading
 
-        from mynah.config import glossary as glossary_mod
         from mynah.core.live import run_worker
 
-        terms = glossary_mod.load()
         self._worker_stop = threading.Event()
 
         def on_segment(seg: dict) -> None:
@@ -228,7 +237,6 @@ class RecordScreen(Screen):
                 self._recorder,
                 model_name=settings.model,
                 language=settings.language,
-                glossary=glossary_mod.as_initial_prompt(terms),
                 backend=settings.backend,
                 on_segment=on_segment,
                 stop_event=self._worker_stop,
@@ -261,8 +269,12 @@ class RecordScreen(Screen):
         self.action_toggle_pause()
 
     @on(Button.Pressed, "#btn_stop")
-    async def _on_stop_button(self) -> None:
-        await self.action_stop()
+    def _on_stop_button(self) -> None:
+        # Not `await self.action_stop()`: a Button.Pressed handler runs on the
+        # Screen's own message pump, and awaiting the worker there blocks every
+        # repaint, freezing the very animation below. Key bindings run on the
+        # App pump and were unaffected, which is why this only bit the mouse.
+        self.run_worker(self.action_stop(), exclusive=False)
 
     async def _stop_worker(self) -> None:
         """Signal the transcribe worker and wait for it to drain.
@@ -285,11 +297,11 @@ class RecordScreen(Screen):
             self.notify("Recorder not ready", severity="warning")
             return
         try:
+            self._recorder.stop()
+            self._stopping = True
+            await self._stop_worker()
             if self._timer is not None:
                 self._timer.stop()
-            self._recorder.stop()
-            self.query_one("#status_label", Static).update("⏳ Transcribing the final chunk...")
-            await self._stop_worker()
 
             from mynah.config import settings as settings_mod
             from mynah.core.pipeline import PipelineOptions
@@ -306,6 +318,9 @@ class RecordScreen(Screen):
             )
             self.app.switch_screen(ProgressScreen(session=self._session, options=opts))
         except Exception as exc:  # noqa: BLE001
+            # Without this the screen keeps showing the waiting animation and
+            # the clock, meter and no-input warning never come back.
+            self._stopping = False
             self.notify(f"Stop failed: {exc}", severity="error")
 
     async def action_leave(self) -> None:

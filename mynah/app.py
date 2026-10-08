@@ -16,7 +16,6 @@ _TUI_SUPPRESSING_FLAGS = {
     "--version",
     "--setup",
     "--doctor",
-    "--edit-glossary",
     "--edit-replacements",
 }
 

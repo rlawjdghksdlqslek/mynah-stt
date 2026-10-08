@@ -7,7 +7,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from mynah.config import glossary as glossary_mod
 from mynah.config import replacements as replacements_mod
 from mynah.core import audio as audio_mod
 from mynah.core import format as format_mod
@@ -69,6 +68,22 @@ def _writable_output_path(input_path: Path) -> Path:
         return _unique_output_path(fallback_dir / input_path.name)
 
 
+def _duration_hint(wav: Path) -> str:
+    """Return " N.N min of audio", or "" if the header cannot be read.
+
+    This only decorates the progress line, so a WAV that cannot be parsed
+    must not cost the user the whole run.
+    """
+    import wave
+
+    try:
+        with wave.open(str(wav), "rb") as handle:
+            rate = handle.getframerate()
+            return f" {handle.getnframes() / rate / 60:.1f} min of audio" if rate else ""
+    except (OSError, wave.Error):
+        return ""
+
+
 def run(
     input_path: Path,
     options: PipelineOptions,
@@ -99,11 +114,12 @@ def run(
             stages_run.append("denoise")
             _emit("denoise", "denoised", 1.0)
 
-        terms = glossary_mod.load()
         rules = replacements_mod.load()
 
         def _t_progress(message: str, p: float | None) -> None:
             _emit("transcribe", message, p)
+
+        from mynah.core.live import guard_segments
 
         if options.diarize:
             # Speaker assignment needs WhisperX word-level alignment, which
@@ -112,25 +128,22 @@ def run(
                 wav,
                 model_name=options.model,
                 language=options.language,
-                initial_prompt=glossary_mod.as_initial_prompt(terms),
-                hotwords=glossary_mod.as_hotwords(terms),
                 align_words=True,
                 on_progress=_t_progress,
             )
         else:
-            from mynah.core.live import guard_segments
-
             # --timestamps reads segment starts, which every engine returns,
             # so only diarization is worth 0.86x realtime.
-            _t_progress("transcribing", 0.0)
+            _t_progress(f"transcribing{_duration_hint(wav)}", 0.0)
             result = transcribe_mod.transcribe_wav(
                 wav,
                 model_name=options.model,
                 language=options.language,
-                initial_prompt=glossary_mod.as_initial_prompt(terms),
             )
-            guard_segments(result.get("segments", []))
             _t_progress("transcribed", 1.0)
+        # Both engines fall into repetition loops on bad audio, so both get
+        # the guard. The diarize branch went without one until 0.4.0.
+        guard_segments(result.get("segments", []))
         stages_run.append("transcribe")
 
         if options.diarize:
@@ -218,7 +231,7 @@ def _transcribe_uncovered(session, options, segments: list[dict], emit) -> list[
         start_seconds=covered,
         model_name=options.model,
         language=options.language,
-        prompt=glossary_mod.as_initial_prompt(glossary_mod.load()),
+        prompt="",
         backend=str(session_mod.get_options(session).get("backend", "auto")),
     )
     session_mod.append_segment(session, seg)

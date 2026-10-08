@@ -6,6 +6,66 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the major version is 0, a breaking change raises the minor version.
 
+## [0.4.0] - 2026-10-08
+
+The glossary and the term-review screen are gone. Both were measured against
+this project's own recordings and both were doing more harm than good.
+
+### Breaking changes
+
+- **The glossary is removed**, along with `--edit-glossary`, the Glossary tab
+  and `glossary.txt`. Terms are no longer passed to Whisper as an
+  `initial_prompt`. Across 49 of this project's own transcripts the glossary
+  term "Slack" appeared 154 times, of which 149 were fabricated: 9 inside the
+  echoed prompt sentence and 140 inside repetition runs, in meetings where the
+  word was never spoken. Whisper treats `initial_prompt` as text that preceded
+  the audio, so on an unclear stretch it continues that text instead of
+  transcribing. Measured on one 90-second clip, dropping it took the
+  transcript from 258 to 379 characters. An existing `glossary.txt` is ignored
+  and can be deleted.
+- **Term review is removed**, along with `--suggest-replacements`,
+  `--scan-dir`, the Analyze tab, the "Review terms" badge and the `T` key. It
+  scanned `~/Documents/mynah-output`, which recorded sessions never write to,
+  so it reported nothing for two releases. Pointed at the right folder it
+  produced 209 clusters whose largest entries merged ordinary distinct words
+  (시간/시작/기준/기존/기본, 기능/가능, AI/API/UI). Jamo edit distance is too
+  coarse for two-syllable Korean.
+- **Dependencies `jamo` and `kiwipiepy` are dropped**; they existed only for
+  that clustering.
+- The term screen is now a single Replacements screen (`G`), and
+  `--edit-replacements` opens it.
+
+### Fixed
+
+- **Replacement rules no longer match inside a word.** An `ok -> OK` rule had
+  turned "looked" into "loOKed" and "booking" into "boOKing" in already
+  shipped transcripts. ASCII rules now require that no other ASCII letter or
+  digit touches the term, so `ok입니다` is still corrected while `looked` is
+  left alone. `\b` is deliberately not used: it is Unicode-aware, so hangul
+  counts as a word character and every rule would stop firing next to a
+  Korean particle.
+- **The recording screen no longer looks frozen after Stop.** The elapsed
+  clock used to be stopped before the final chunk was awaited, leaving one
+  static line on screen for as long as that chunk took. It now animates. The
+  Stop button additionally ran that wait on the screen's own message pump,
+  which blocked every repaint; it is scheduled off the pump now.
+- **`--diarize` output is guarded against repetition loops.** The loop guard
+  had only been wired into the non-diarize path, so the same audio produced a
+  gap marker on one path and a wall of repeated words on the other.
+- A malformed WAV header can no longer abort a run: the audio-length figure in
+  the progress line is cosmetic and now falls back to nothing.
+
+### Added
+
+- The progress screen reports how much audio it is about to transcribe, which
+  gives the elapsed clock a scale.
+
+### Changed
+
+- Documentation now gives the real config directory on macOS
+  (`~/Library/Application Support/mynah/`); it had said `~/.config/mynah/`,
+  which is not where `platformdirs` puts it on this platform.
+
 ## [0.3.0] - 2026-09-17
 
 A UI/UX pass over the whole app, plus GPU transcription for file input.
@@ -116,6 +176,7 @@ Read the **Breaking changes** section before upgrading.
 - First release: audio file in, transcript out, with optional speaker
   diarization, timestamps, and denoising.
 
+[0.4.0]: https://github.com/rlawjdghksdlqslek/mynah-stt/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/rlawjdghksdlqslek/mynah-stt/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/rlawjdghksdlqslek/mynah-stt/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/rlawjdghksdlqslek/mynah-stt/releases/tag/v0.1.0

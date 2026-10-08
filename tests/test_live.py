@@ -136,7 +136,7 @@ class TestRunWorker:
         stop.set()  # exit after draining what is already queued
 
         live.run_worker(
-            s, rec, model_name="large-v3", language="ko", glossary="",
+            s, rec, model_name="large-v3", language="ko",
             backend="mlx", transcribe_fn=fn, sleep_fn=lambda _s: None,
             stop_event=stop,
         )
@@ -154,14 +154,15 @@ class TestRunWorker:
         stop.set()
 
         live.run_worker(
-            s, rec, model_name="large-v3", language="ko", glossary="용어집",
+            s, rec, model_name="large-v3", language="ko",
             backend="mlx", transcribe_fn=fn, sleep_fn=lambda _s: None,
             stop_event=stop,
         )
 
-        assert calls["prompts"][0] == "용어집"
-        assert "앞 청크 마지막 문장" in calls["prompts"][1]
-        assert calls["prompts"][1].startswith("용어집")
+        # The prompt slot carries only real previous speech. A term list here
+        # gets echoed back as if it had been spoken.
+        assert calls["prompts"][0] == ""
+        assert calls["prompts"][1] == "앞 청크 마지막 문장"
 
     def test_notifies_on_each_segment(self, tmp_path):
         s = session_mod.create({}, root=tmp_path)
@@ -174,7 +175,7 @@ class TestRunWorker:
         stop.set()
 
         live.run_worker(
-            s, rec, model_name="large-v3", language="ko", glossary="",
+            s, rec, model_name="large-v3", language="ko",
             backend="mlx", transcribe_fn=fn, sleep_fn=lambda _s: None,
             stop_event=stop, on_segment=seen.append,
         )
@@ -192,7 +193,7 @@ class TestRunWorker:
         stop.set()
 
         live.run_worker(
-            s, rec, model_name="large-v3", language="ko", glossary="",
+            s, rec, model_name="large-v3", language="ko",
             backend="mlx", transcribe_fn=fn, sleep_fn=lambda _s: None,
             stop_event=stop,
         )
@@ -212,7 +213,7 @@ class TestRunWorker:
         stop.set()
 
         live.run_worker(
-            s, rec, model_name="large-v3", language="ko", glossary="",
+            s, rec, model_name="large-v3", language="ko",
             backend="mlx", transcribe_fn=fn, sleep_fn=lambda _s: None,
             stop_event=stop,
         )
@@ -239,7 +240,7 @@ class TestRunWorker:
         stop.set()
 
         live.run_worker(
-            s, rec, model_name="large-v3", language="ko", glossary="",
+            s, rec, model_name="large-v3", language="ko",
             backend="mlx", transcribe_fn=exploding, sleep_fn=lambda _s: None,
             stop_event=stop,
         )
@@ -260,7 +261,7 @@ class TestRunWorker:
         stop.set()
 
         live.run_worker(
-            s, rec, model_name="large-v3", language="ko", glossary="용어집",
+            s, rec, model_name="large-v3", language="ko",
             backend="mlx", transcribe_fn=fn, sleep_fn=lambda _s: None,
             stop_event=stop,
         )
@@ -278,7 +279,7 @@ class TestRunWorker:
         stop.set()
 
         live.run_worker(
-            s, rec, model_name="large-v3", language="ko", glossary="",
+            s, rec, model_name="large-v3", language="ko",
             backend="mlx", transcribe_fn=fn, sleep_fn=lambda _s: None,
             stop_event=stop,
         )
@@ -301,3 +302,4 @@ class TestGuardSegments:
 
     def test_empty_list_is_fine(self):
         assert live.guard_segments([]) == []
+

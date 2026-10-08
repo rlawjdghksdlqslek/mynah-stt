@@ -83,6 +83,21 @@ def apply(text: str, rules: list[Rule]) -> str:
                     f"warning: invalid regex {rule.src!r} skipped: {exc}",
                     file=sys.stderr,
                 )
+        elif (
+            rule.src.isascii()
+            and rule.src[:1].isalnum()
+            and rule.src[-1:].isalnum()
+        ):
+            # A bare str.replace() turned "looked" into "loOKed" for a rule
+            # of ok -> OK. \b cannot be used here: it is Unicode-aware, so
+            # hangul counts as a word character and "slack에서" would stop
+            # matching -- the dominant case in a Korean transcript. Only
+            # ASCII word characters may abut the term.
+            text = re.sub(
+                rf"(?<![A-Za-z0-9_]){re.escape(rule.src)}(?![A-Za-z0-9_])",
+                lambda _m, d=rule.dst: d,
+                text,
+            )
         else:
             text = text.replace(rule.src, rule.dst)
     return text

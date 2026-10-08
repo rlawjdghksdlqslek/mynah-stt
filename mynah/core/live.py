@@ -157,7 +157,6 @@ def run_worker(
     *,
     model_name: str,
     language: str,
-    glossary: str,
     backend: str,
     on_segment: Callable[[dict], None] | None = None,
     stop_event=None,
@@ -184,14 +183,15 @@ def run_worker(
                    "text": mark_gap(start_seconds, end_seconds),
                    "retried": False, "failed": True}
         else:
-            prompt = glossary
-            if tail:
-                prompt = f"{glossary} {tail}".strip() if glossary else tail
+            # The prompt slot holds the previous chunk's tail, which is what
+            # Whisper was trained to find there. A term list in this slot gets
+            # echoed back as if it had been spoken; that cost this project 140
+            # fabricated mentions of one glossary word across 12 transcripts.
             try:
                 seg = transcribe_chunk(
                     pcm,
                     start_seconds=start_seconds,
-                    model_name=model_name, language=language, prompt=prompt,
+                    model_name=model_name, language=language, prompt=tail,
                     backend=backend,
                     allow_retry=consecutive_retries < MAX_CONSECUTIVE_RETRIES,
                     transcribe_fn=transcribe_fn,

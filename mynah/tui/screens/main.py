@@ -128,7 +128,6 @@ class MainScreen(Screen):
         ("f", "open_file", "Open file"),
         ("s", "open_settings", "Settings"),
         ("g", "open_terms", "Terms"),
-        Binding("t", "open_analyze", "Review terms", show=False),
         ("o", "open_folder", "Recordings"),
         Binding("u", "resume_session", "Unfinished", show=False),
         ("q", "quit", "Quit"),
@@ -159,11 +158,6 @@ class MainScreen(Screen):
         text-align: center;
         margin-top: 1;
     }
-    #review_badge {
-        color: $warning;
-        text-align: center;
-        margin-top: 1;
-    }
     #unfinished_badge {
         color: $error;
         text-align: center;
@@ -177,7 +171,6 @@ class MainScreen(Screen):
             yield Static("●  Record", id="record_label")
             yield Static("R or Space", id="record_hint")
             yield Static("Open audio file (F)", id="file_label")
-            yield Static("", id="review_badge")
             yield Static("", id="unfinished_badge")
         yield Footer()
 
@@ -188,14 +181,6 @@ class MainScreen(Screen):
         self._update_badge()
 
     def _update_badge(self) -> None:
-        from mynah.config import corpus_cache
-        count = corpus_cache.pending_count()
-        badge = self.query_one("#review_badge", Static)
-        if count > 0:
-            badge.update(f"Review terms · {count}  (T)")
-        else:
-            badge.update("")
-
         from mynah.core import session as session_mod
 
         pending = session_mod.list_unfinished()
@@ -212,7 +197,6 @@ class MainScreen(Screen):
             "record_label": self.action_record,
             "record_hint": self.action_record,
             "file_label": self.action_open_file,
-            "review_badge": self.action_open_analyze,
             "unfinished_badge": self.action_resume_session,
         }.get(getattr(event.widget, "id", None))
         if action is not None:
@@ -299,12 +283,8 @@ class MainScreen(Screen):
         self.app.push_screen(SettingsScreen())
 
     def action_open_terms(self) -> None:
-        from mynah.tui.screens.term_manager import TermManagerScreen
-        self.app.push_screen(TermManagerScreen(initial_tab="glossary"))
-
-    def action_open_analyze(self) -> None:
-        from mynah.tui.screens.term_manager import TermManagerScreen
-        self.app.push_screen(TermManagerScreen(initial_tab="analyze"))
+        from mynah.tui.screens.replacements import ReplacementsScreen
+        self.app.push_screen(ReplacementsScreen())
 
     def action_open_folder(self) -> None:
         import subprocess

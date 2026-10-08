@@ -40,11 +40,10 @@
 - **Automatic gain correction** — quiet recordings are the single largest cause of Whisper hallucination loops; input is normalized to −18 dBFS before transcription (the archived audio keeps its original level)
 - **Or drop an existing file** — m4a, mp3, wav, flac, webm, mp4 supported
 - **Korean-first** — Whisper large-v3, fixed `ko` language, VAD always on to prevent hallucinations on silence
-- **English code-switching** — three-layer defense (initial_prompt + hotwords + post-process replacements) keeps project names and technical terms intact
 - **Speaker diarization** — `SPEAKER_01:` labels per segment (optional, requires HF token)
 - **Word-level timestamps** — `[HH:MM:SS]` prefix per segment (optional)
 - **Denoising** — Demucs vocals stem strips HVAC and keyboard noise (optional)
-- **Glossary & replacements** — editable inside the TUI; glossary fed into Whisper as context and hotwords
+- **Replacements** — find/replace rules applied after transcription, editable inside the TUI
 - **TUI for daily use, CLI for scripting** — both first-class, same pipeline
 - **System health check** — `mynah --doctor` verifies all dependencies and shows actionable fixes
 - **Offline, always** — no API calls after the first model download (~3 GB, one-time)
@@ -111,7 +110,7 @@ mynah --doctor                      # check system dependencies
 
 Run `mynah` with no arguments to open the TUI.
 
-**Main screen** — press `R` or `Space` to start recording, `F` to open an existing audio file, `S` for settings, `G` for glossary, `Q` to quit.
+**Main screen** — press `R` or `Space` to start recording, `F` to open an existing audio file, `S` for settings, `G` for replacement rules, `Q` to quit.
 
 **Recording screen** — microphone captures at 16 kHz mono. The level meter shows live input amplitude, and transcribed text appears in the panel below as each chunk finishes. `Space` to pause/resume, `S` to stop and transcribe, `Esc` to leave the screen with the recording kept (finish or discard it later from the main screen).
 
@@ -138,28 +137,17 @@ mynah <audio_file> [flags]
 | `--lang`              | `ko` (default), `en`, `auto`                    |
 | `--setup`             | Interactive HuggingFace token wizard            |
 | `--doctor`            | System dependency health check                  |
-| `--edit-glossary`     | Open the TUI glossary editor                    |
 | `--edit-replacements` | Open the TUI replacements editor                |
 
 ---
 
-## Glossary — the biggest quality lever
+## Replacements
 
-Add the project names, people, and technical terms that appear in your meetings. mynah feeds them to Whisper as context (initial_prompt + hotwords), which keeps code-switched proper nouns in their original form.
-
-```bash
-# Edit from the TUI (G key) or directly:
-~/.config/mynah/glossary.txt   # one term per line
-```
-
-Example entries: `Whisper`, `Slack`, `Q3 OKR`, `홍길동`, `CTranslate2`
-
-### Replacements (safety net)
-
-Post-processing find/replace rules for known mistakes:
+Find/replace rules applied to the finished transcript, for mistakes the model
+makes repeatedly:
 
 ```toml
-# ~/.config/mynah/replacements.toml
+# ~/Library/Application Support/mynah/replacements.toml
 [[rule]]
 from = "슬랙"
 to = "Slack"
@@ -177,9 +165,8 @@ Set `regex = true` on any rule to use Python regex syntax.
 
 | Path                                | Purpose                               |
 | ----------------------------------- | ------------------------------------- |
-| `~/.config/mynah/config.toml`       | Last-used options (auto-saved)        |
-| `~/.config/mynah/glossary.txt`      | Domain vocabulary (one term per line) |
-| `~/.config/mynah/replacements.toml` | Post-processing find/replace rules    |
+| `~/Library/Application Support/mynah/config.toml`       | Last-used options (auto-saved)     |
+| `~/Library/Application Support/mynah/replacements.toml` | Post-transcription find/replace    |
 
 ### Recording sessions
 
@@ -284,7 +271,7 @@ mynah/
 │   ├── audio.py      # ffmpeg normalize + gain correction
 │   ├── transcribe.py # MLX / WhisperX backend dispatch
 │   └── pipeline.py   # file pipeline + session finalization
-├── config/           # settings, glossary, replacements (no ML deps)
+├── config/           # settings, replacements (no ML deps)
 ├── tui/              # Textual app + screens
 └── app.py            # dispatches TUI vs CLI based on argv
 ```

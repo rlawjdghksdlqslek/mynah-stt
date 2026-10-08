@@ -208,7 +208,6 @@ def transcribe(
     language: str = "ko",
     beam_size: int = 5,
     initial_prompt: str = "",
-    hotwords: str = "",
     align_words: bool = False,
     on_progress: ProgressCb = None,
 ) -> dict[str, Any]:
@@ -226,8 +225,6 @@ def transcribe(
     asr_options: dict[str, Any] = {"beam_size": beam_size}
     if initial_prompt:
         asr_options["initial_prompt"] = initial_prompt
-    if hotwords:
-        asr_options["hotwords"] = hotwords
 
     model = whisperx.load_model(
         model_name,
