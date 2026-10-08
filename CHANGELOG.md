@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the major version is 0, a breaking change raises the minor version.
 
+## [0.4.1] - 2026-10-08
+
+### Fixed
+
+- **Stopping a recording twice finalized the same session twice.** The guard
+  only checked that a recorder object existed, and stopping does not clear it,
+  so a second press ran the whole path again: a second progress screen, a
+  second `finalize_session`, and a tail that could be transcribed and appended
+  to the transcript twice. A modal overlay now covers the record screen while
+  the last chunk is transcribed, blocking every key and click, with an
+  explicit guard behind it for a press queued before the overlay mounts.
+- **The record screen no longer offers controls that do nothing.** While the
+  final chunk was transcribing, `Pause` stayed clickable and relabelled itself
+  as though recording had resumed, the level meter kept drawing, and the
+  footer still advertised `Space` and `S` — on a recording that had already
+  ended. The overlay replaces the dots animation added in 0.4.0 and shows how
+  long the wait has run.
+
 ## [0.4.0] - 2026-10-08
 
 The glossary and the term-review screen are gone. Both were measured against
@@ -176,6 +194,7 @@ Read the **Breaking changes** section before upgrading.
 - First release: audio file in, transcript out, with optional speaker
   diarization, timestamps, and denoising.
 
+[0.4.1]: https://github.com/rlawjdghksdlqslek/mynah-stt/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/rlawjdghksdlqslek/mynah-stt/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/rlawjdghksdlqslek/mynah-stt/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/rlawjdghksdlqslek/mynah-stt/compare/v0.1.0...v0.2.0

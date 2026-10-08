@@ -112,7 +112,7 @@ Run `mynah` with no arguments to open the TUI.
 
 **Main screen** — press `R` or `Space` to start recording, `F` to open an existing audio file, `S` for settings, `G` for replacement rules, `Q` to quit.
 
-**Recording screen** — microphone captures at 16 kHz mono. The level meter shows live input amplitude, and transcribed text appears in the panel below as each chunk finishes. `Space` to pause/resume, `S` to stop and transcribe, `Esc` to leave the screen with the recording kept (finish or discard it later from the main screen).
+**Recording screen** — microphone captures at 16 kHz mono. The level meter shows live input amplitude, and transcribed text appears in the panel below as each chunk finishes. `Space` to pause/resume, `S` to stop and transcribe, `Esc` to leave the screen with the recording kept (finish or discard it later from the main screen). After `S`, an overlay covers the screen while the last chunk is transcribed, so the controls cannot be used on a recording that has already ended.
 
 **Recovering an unfinished session** — if mynah was killed mid-recording, the main screen shows a banner. Press `U` to resume recording into the same session, finalize what was captured, or discard it. Nothing is deleted until you confirm twice.
 

@@ -307,3 +307,25 @@ class TestRecorderChunks:
         rec.stop()
 
         assert rec.flush_final_chunk() is None
+
+
+class TestStopIsNotReentrant:
+    """Pressing Stop twice used to finalize the same session twice.
+
+    The old guard only checked that a recorder existed, and `stop()` does not
+    clear it, so a second press ran the whole body again: a second
+    ProgressScreen, a second finalize_session, and a tail that could be
+    transcribed and appended twice.
+    """
+
+    def test_second_stop_returns_before_touching_anything(self):
+        import asyncio
+
+        from mynah.tui.screens.record import RecordScreen
+
+        screen = RecordScreen.__new__(RecordScreen)
+        screen._recorder = object()  # non-None, as it is after the first stop
+        screen._stopping = True
+
+        # Without the guard this reaches `self._recorder.stop()` and raises.
+        asyncio.run(screen.action_stop())

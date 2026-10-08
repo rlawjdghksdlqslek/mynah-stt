@@ -5,12 +5,66 @@ from __future__ import annotations
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.screen import Screen
+from textual.containers import Container, Horizontal, Vertical
+from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Footer, Header, ProgressBar, RichLog, Static
 
 from mynah.config import settings as settings_mod
 from mynah.core.record import AudioRecorder
+
+
+class FinalChunkModal(ModalScreen):
+    """Covers the record screen while the worker drains the last chunk.
+
+    A modal rather than disabled buttons: it blocks every key and click at
+    once, so the screen underneath cannot be told to resume a recording that
+    has already ended, or to stop a second time. Stopping twice used to
+    finalize the same session twice and could duplicate a segment.
+    """
+
+    DEFAULT_CSS = """
+    FinalChunkModal {
+        align: center middle;
+        background: $background 60%;
+    }
+    #wait_box {
+        width: 46;
+        height: auto;
+        padding: 2 4;
+        border: round #2DD4BF;
+        background: #262626;
+    }
+    #wait_title {
+        color: #2DD4BF;
+        text-style: bold;
+        text-align: center;
+    }
+    #wait_time {
+        color: #8C8C8C;
+        text-align: center;
+        margin-top: 1;
+    }
+    """
+
+    HINT = "usually under 15s"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._seconds = 0
+
+    def compose(self) -> ComposeResult:
+        with Container(id="wait_box"):
+            yield Static("⏳  Transcribing final chunk", id="wait_title")
+            yield Static(f"00:00   ·   {self.HINT}", id="wait_time")
+
+    def on_mount(self) -> None:
+        self.set_interval(1.0, self._tick)
+
+    def _tick(self) -> None:
+        self._seconds += 1
+        self.query_one("#wait_time", Static).update(
+            f"{self._seconds // 60:02d}:{self._seconds % 60:02d}   ·   {self.HINT}"
+        )
 
 
 class RecordScreen(Screen):
@@ -71,7 +125,6 @@ class RecordScreen(Screen):
         self._worker_stop = None
         self._silent_ticks = 0
         self._stopping = False
-        self._wait_dots = 0
 
     def compose(self) -> ComposeResult:
         settings = settings_mod.load()
@@ -180,15 +233,6 @@ class RecordScreen(Screen):
     def _refresh_timer(self) -> None:
         import math
 
-        if self._stopping:
-            # The worker still has the final chunk to transcribe, which takes
-            # tens of seconds. Without this the screen sits on one static line
-            # and reads as a hang.
-            self._wait_dots = (self._wait_dots + 1) % 4
-            self.query_one("#status_label", Static).update(
-                "⏳ Transcribing the final chunk" + "." * self._wait_dots
-            )
-            return
         if not self._recorder:
             return
         seconds = int(self._recorder.duration_seconds)
@@ -296,12 +340,21 @@ class RecordScreen(Screen):
         if not self._recorder:
             self.notify("Recorder not ready", severity="warning")
             return
+        if self._stopping:
+            # The modal blocks input, but a press queued before it mounted
+            # would otherwise start a second finalization of the same session.
+            return
+        self._stopping = True
+        modal: FinalChunkModal | None = None
         try:
             self._recorder.stop()
-            self._stopping = True
-            await self._stop_worker()
             if self._timer is not None:
                 self._timer.stop()
+            modal = FinalChunkModal()
+            await self.app.push_screen(modal)
+            await self._stop_worker()
+            self.app.pop_screen()
+            modal = None
 
             from mynah.config import settings as settings_mod
             from mynah.core.pipeline import PipelineOptions
@@ -318,8 +371,9 @@ class RecordScreen(Screen):
             )
             self.app.switch_screen(ProgressScreen(session=self._session, options=opts))
         except Exception as exc:  # noqa: BLE001
-            # Without this the screen keeps showing the waiting animation and
-            # the clock, meter and no-input warning never come back.
+            # Leave nothing covering the screen, and let the user try again.
+            if modal is not None:
+                self.app.pop_screen()
             self._stopping = False
             self.notify(f"Stop failed: {exc}", severity="error")
 
