@@ -303,3 +303,40 @@ class TestGuardSegments:
     def test_empty_list_is_fine(self):
         assert live.guard_segments([]) == []
 
+
+
+class TestBrokenDecodeIsRetried:
+    """MLX drifted into other scripts on a near-silent 91-minute meeting.
+
+    6 of 81 chunks came back containing U+FFFD. has_loop() does not fire on
+    gibberish, so nothing retried them and the garbage reached the transcript.
+    """
+
+    def test_replacement_character_triggers_the_beam_path(self):
+        calls = []
+
+        def fake(pcm, **kw):
+            calls.append(kw["backend"])
+            return {"text": "물리적 복제 �厲자�elve" if len(calls) == 1
+                    else "물리적 복제 AWS 기능만은 안될 것 같은데요"}
+
+        seg = live.transcribe_chunk(b"\x01\x00" * 1000, start_seconds=0.0,
+                                    model_name="large-v3", language="ko",
+                                    prompt="", backend="mlx", transcribe_fn=fake)
+        assert calls == ["mlx", "whisperx"]
+        assert seg["retried"] is True
+        # A broken decode is not a loop, so the chunk is kept, not gap-marked.
+        assert seg["failed"] is False
+        assert "transcription failed" not in seg["text"]
+
+    def test_clean_text_is_not_retried(self):
+        calls = []
+
+        def fake(pcm, **kw):
+            calls.append(kw["backend"])
+            return {"text": "정상적인 회의 발언입니다"}
+
+        live.transcribe_chunk(b"\x01\x00" * 1000, start_seconds=0.0,
+                              model_name="large-v3", language="ko",
+                              prompt="", backend="mlx", transcribe_fn=fake)
+        assert calls == ["mlx"]

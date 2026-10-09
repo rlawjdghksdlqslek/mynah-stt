@@ -46,8 +46,6 @@ class FinalChunkModal(ModalScreen):
     }
     """
 
-    HINT = "usually under 15s"
-
     def __init__(self) -> None:
         super().__init__()
         self._seconds = 0
@@ -55,15 +53,23 @@ class FinalChunkModal(ModalScreen):
     def compose(self) -> ComposeResult:
         with Container(id="wait_box"):
             yield Static("⏳  Transcribing final chunk", id="wait_title")
-            yield Static(f"00:00   ·   {self.HINT}", id="wait_time")
+            yield Static("00:00", id="wait_time")
 
     def on_mount(self) -> None:
         self.set_interval(1.0, self._tick)
 
     def _tick(self) -> None:
         self._seconds += 1
+        # Elapsed only, never an estimate. Decode time tracks the number of
+        # tokens generated, not the length of the audio: measured over twelve
+        # consecutive 60 s chunks of one real meeting, the same engine ran
+        # between 1.9x and 11.6x realtime, because a chunk that starts to
+        # repeat keeps emitting tokens until the cap. Predicting from the
+        # running median was off by 100% at the median and 1849% at worst, and
+        # the WhisperX retry path is slower again. There is no number here
+        # that would be true.
         self.query_one("#wait_time", Static).update(
-            f"{self._seconds // 60:02d}:{self._seconds % 60:02d}   ·   {self.HINT}"
+            f"{self._seconds // 60:02d}:{self._seconds % 60:02d}"
         )
 
 

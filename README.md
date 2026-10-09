@@ -39,7 +39,7 @@
 - **Apple GPU acceleration** — MLX runs Whisper on the Metal GPU at 7.8–10.9× realtime, against 0.86× on the CPU path. Falls back automatically off Apple Silicon
 - **Automatic gain correction** — quiet recordings are the single largest cause of Whisper hallucination loops; input is normalized to −18 dBFS before transcription (the archived audio keeps its original level)
 - **Or drop an existing file** — m4a, mp3, wav, flac, webm, mp4 supported
-- **Korean-first** — Whisper large-v3, fixed `ko` language, VAD always on to prevent hallucinations on silence
+- **Korean-first** — Whisper large-v3, fixed `ko` language
 - **Speaker diarization** — `SPEAKER_01:` labels per segment (optional, requires HF token)
 - **Word-level timestamps** — `[HH:MM:SS]` prefix per segment (optional)
 - **Denoising** — Demucs vocals stem strips HVAC and keyboard noise (optional)

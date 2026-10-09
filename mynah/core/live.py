@@ -130,7 +130,11 @@ def transcribe_chunk(
     text = (result.get("text") or "").strip()
     retried = False
 
-    if has_loop(text) and allow_retry:
+    # U+FFFD means the decode broke; it is never real output. MLX is greedy
+    # (no beam search) and drifts into other scripts on near-silent audio,
+    # where the beam path recovered the same chunk cleanly. Unlike a loop this
+    # does not mark a gap: the rest of the text is usually fine.
+    if (has_loop(text) or "\ufffd" in text) and allow_retry:
         retried = True
         result = fn(
             normalize_gain(pcm), model_name=model_name, language=language,

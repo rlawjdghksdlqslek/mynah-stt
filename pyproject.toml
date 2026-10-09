@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mynah-stt"
-version = "0.4.1"
+version = "0.4.2"
 description = "Local-first transcription tool for Korean meetings (audio file -> txt)"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"

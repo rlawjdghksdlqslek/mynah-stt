@@ -6,6 +6,39 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the major version is 0, a breaking change raises the minor version.
 
+## [0.4.2] - 2026-10-09
+
+### Fixed
+
+- **A broken decode is now retried through the beam-search path.** Whisper's
+  tokenizer splits hangul across byte-level tokens whose boundaries do not
+  line up with the characters: `물리적` is four tokens, the second of which
+  straddles two syllables. One mis-sampled token therefore corrupts several
+  characters at once. On a 91-minute meeting that was 80% silence, 6 of 81
+  chunks came back carrying U+FFFD together with fragments of Arabic, Greek
+  and Chinese. `has_loop()` only detects repetition, so nothing retried them
+  and the garbage reached the transcript. U+FFFD is never valid output, so it
+  now triggers the same WhisperX retry a repetition loop does — the beam path
+  recovered the same chunk cleanly where MLX, which has no beam search, did
+  not. Unlike a loop it does not mark a gap, because the rest of the text is
+  usually intact. Across every session recorded so far this affects 9 of 375
+  chunks, about 2.4%.
+- **The waiting overlay no longer promises a duration.** It claimed the final
+  chunk takes "usually under 15s". Decode time tracks the number of tokens
+  generated, not the length of the audio: over twelve consecutive 60-second
+  chunks of one real meeting the same engine ran between 1.9x and 11.6x
+  realtime, and predicting from the running median was off by 100% at the
+  median and 1849% at worst. It now shows elapsed time only.
+
+### Changed
+
+- **The documentation no longer claims VAD is always on.** pyannote VAD runs
+  only inside `transcribe()`, which since 0.3.0 is reached only with
+  `--diarize`; the chunk path and `transcribe_wav()` have none. This is left
+  as it is on purpose: enabling faster-whisper's VAD on a 60-second chunk of
+  the near-silent meeting above discarded every word in it. CLAUDE.md now
+  records that measurement so the setting is not "fixed" back.
+
 ## [0.4.1] - 2026-10-08
 
 ### Fixed
@@ -194,6 +227,7 @@ Read the **Breaking changes** section before upgrading.
 - First release: audio file in, transcript out, with optional speaker
   diarization, timestamps, and denoising.
 
+[0.4.2]: https://github.com/rlawjdghksdlqslek/mynah-stt/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/rlawjdghksdlqslek/mynah-stt/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/rlawjdghksdlqslek/mynah-stt/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/rlawjdghksdlqslek/mynah-stt/compare/v0.2.0...v0.3.0
